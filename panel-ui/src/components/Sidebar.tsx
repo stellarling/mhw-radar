@@ -78,8 +78,8 @@ export function Sidebar({
         />
       </div>
       <div style={{ marginTop: "auto", padding: "0 14px 14px", display: "flex", flexDirection: "column", gap: 2 }}>
-        <span style={{ color: "#8c8c8c", fontSize: 12, lineHeight: 1.5 }}>MHW Radar</span>
-        <span style={{ color: "#6c6c6c", fontSize: 11, lineHeight: 1.5 }}>数据由mhdatalab.com提供</span>
+        <span style={{ color: "#b0b0b0", fontSize: 12, lineHeight: 1.5 }}>MHW Radar</span>
+        <span style={{ color: "#8c8c8c", fontSize: 11, lineHeight: 1.5 }}>数据由mhdatalab.com提供</span>
       </div>
     </div>
   );

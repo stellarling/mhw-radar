@@ -488,7 +488,7 @@ export default function App() {
                   }}
                 >
                   <div style={{ color: "#bfa76b", fontSize: 14, marginBottom: 6 }}>GitHub</div>
-                  <div style={{ color: "#6c6c6c", fontSize: 12 }}>待补充</div>
+                  <a href="https://github.com/stellarling/mhw-radar" target="_blank" rel="noopener noreferrer" style={{ color: "#8ab4f8", fontSize: 12 }}>github.com/stellarling/mhw-radar</a>
                   <div
                     style={{
                       display: "inline-block",
@@ -500,7 +500,7 @@ export default function App() {
                       border: "1px solid #555",
                     }}
                   >
-                    待补充
+                    <a href="https://github.com/stellarling/mhw-radar" target="_blank" rel="noopener noreferrer" style={{ color: "#8ab4f8", fontSize: 11 }}>打开 GitHub</a>
                   </div>
                 </div>
               </div>
@@ -515,7 +515,7 @@ export default function App() {
                 }}
               >
                 <div style={{ color: "#bfa76b", fontSize: 14, marginBottom: 8 }}>关于本软件</div>
-                <div style={{ color: "#b0b0b0", fontSize: 13, lineHeight: 1.7 }}>
+                <div style={{ color: "#d0d0d0", fontSize: 13, lineHeight: 1.7 }}>
                   <div style={{ marginBottom: 10 }}>
                     MHW Radar 是一款为《怪物猎人：世界》玩家打造的实时狩猎辅助工具。
                     目前还在早期的开发阶段，请谨慎使用。
@@ -543,7 +543,7 @@ export default function App() {
                   background: "rgba(0,0,0,0.08)",
                 }}
               >
-                <div style={{ color: "#8c8c8c", fontSize: 12, lineHeight: 1.8 }}>
+                <div style={{ color: "#b0b0b0", fontSize: 12, lineHeight: 1.8 }}>
                   本工具为开源免费软件，仅供学习交流使用，禁止用于商业用途。<br />
                   所有游戏相关数据、美术素材及商标版权均归属 CAPCOM CO., LTD.<br />
                   《怪物猎人：世界》《怪物猎人：世界·冰原》© CAPCOM CO., LTD. ALL RIGHTS RESERVED.<br />

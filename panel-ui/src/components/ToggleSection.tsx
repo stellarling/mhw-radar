@@ -10,8 +10,10 @@ export function ToggleSection({
 }) {
   return (
     <div id="basic-tools" style={{ padding: "16px 20px", borderBottom: "1px solid #331e12" }}>
-      <h2 style={{ color: "#dcdcdc", fontSize: 16, margin: "0 0 4px" }}>显示开关</h2>
-      <p style={{ color: "#8c8c8c", fontSize: 12, margin: "0 0 10px" }}>隐藏/显示: Ctrl+Shift+U</p>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 10 }}>
+        <h2 style={{ color: "#dcdcdc", fontSize: 16, margin: 0 }}>显示开关</h2>
+        <span style={{ color: "#b0b0b0", fontSize: 12 }}>隐藏/显示: Ctrl+Shift+U</span>
+      </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "2px 24px" }}>
         {TOGGLES.map(({ key, label }) => (
           <ToggleRow
