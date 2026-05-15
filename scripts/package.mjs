@@ -1,7 +1,7 @@
 // 打包脚本：在 npm run build 之后执行，输出 dist/MHW-Radar-<version>.zip
 // 用法: node scripts/package.mjs
 
-import { readFileSync, existsSync, copyFileSync, mkdirSync } from "fs";
+import { readFileSync, existsSync, copyFileSync, mkdirSync, writeFileSync } from "fs";
 import { join, dirname } from "path";
 import { execSync } from "child_process";
 import { fileURLToPath } from "url";
@@ -63,6 +63,36 @@ const binDir = join(distDir, "resources", "bin");
 mkdirSync(binDir, { recursive: true });
 copyFileSync(join(ROOT, "engine", "target", "release", "mhw-radar.exe"), join(binDir, "mhw-radar.exe"));
 console.log(`  → resources/bin/mhw-radar.exe`);
+
+// 写入使用说明
+const readme = `\
+================================
+  MHW Radar v${version} - 使用说明
+================================
+
+【如何启动】
+直接双击文件夹根目录下的 MHW Radar.exe 即可。
+程序会自动在后台启动引擎。
+
+【注意事项】
+1. 如果发现双击无效，请以管理员身份运行（右键 → 以管理员身份运行）
+   ─ 读取游戏内存可能需要管理员权限
+2. 杀毒软件可能误报
+   ─ 本工具仅读取内存，不修改任何游戏数据
+   ─ 如被杀毒软件拦截，请添加信任/排除项
+3. 目前这一版本只在窗口化全屏模式下生效，后续会更新优化
+4. 快捷键：Ctrl+Shift+U = 切换悬浮窗显示/隐藏
+
+【文件说明】
+MHW Radar.exe         主程序面板
+resources/bin/mhw-radar.exe   数据读取引擎
+
+【免责声明】
+本工具为开源免费软件，仅供学习交流使用。
+© CAPCOM CO., LTD. ALL RIGHTS RESERVED.
+`;
+writeFileSync(join(distDir, "使用说明.txt"), readme, "utf-8");
+console.log(`  → 使用说明.txt`);
 
 // 创建 zip（用 PowerShell 内置 Compress-Archive）
 console.log("\nCreating zip...");
