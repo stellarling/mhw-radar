@@ -197,7 +197,14 @@ fn main() {
 
     let run_result = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![kill_engine])
+        .invoke_handler(tauri::generate_handler![
+            kill_engine,
+            get_version,
+            get_app_dir,
+            get_temp_dir,
+            download_update,
+            spawn_updater,
+        ])
         .on_window_event(|_window, event| {
             if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
                 kill_radar();
@@ -215,4 +222,97 @@ fn main() {
 #[tauri::command]
 fn kill_engine() {
     kill_radar();
+}
+
+/// 返回当前版本号（来自 Cargo.toml）
+#[tauri::command]
+fn get_version() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
+}
+
+/// 返回 MHW Radar.exe 所在目录（用于 bat 知道在哪覆盖文件）
+#[tauri::command]
+fn get_app_dir() -> String {
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
+        .to_string_lossy()
+        .to_string()
+}
+
+/// 返回系统临时目录
+#[tauri::command]
+fn get_temp_dir() -> String {
+    std::env::temp_dir().to_string_lossy().to_string()
+}
+
+/// 通过 PowerShell 从 GitHub 下载更新包
+#[tauri::command]
+fn download_update(url: String, dest: String) -> Result<(), String> {
+    let status = Command::new("powershell")
+        .args(["-NoProfile", "-Command", &format!(
+            "[Net.ServicePointManager]::SecurityProtocol = \
+             [Net.SecurityProtocolType]::Tls12; \
+             Invoke-WebRequest -Uri '{}' -OutFile '{}'",
+            url, dest
+        )])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map_err(|e| format!("无法启动 PowerShell: {}", e))?;
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err("下载失败，请检查网络连接后重试".to_string())
+    }
+}
+
+/// 生成更新 bat 并静默启动，然后面板退出
+///
+/// `app_dir` — MHW Radar.exe 所在目录
+/// `zip_path` — 已下载到本地的更新包完整路径
+#[tauri::command]
+fn spawn_updater(app_dir: String, zip_path: String) -> Result<(), String> {
+    let bat_content = format!(
+        "@echo off\r\n\
+         setlocal\r\n\
+         \r\n\
+         REM Wait for MHW Radar.exe to fully exit\r\n\
+         ping 127.0.0.1 -n 4 > nul\r\n\
+         \r\n\
+         REM Kill engine if still alive\r\n\
+         taskkill /f /im mhw-radar.exe 2>nul\r\n\
+         \r\n\
+         REM Unzip new version over application directory\r\n\
+         powershell -NoProfile -Command \"& {{ Expand-Archive -Path '{}' -DestinationPath '{}' -Force }}\" 2>nul\r\n\
+         \r\n\
+         REM Clean up zip\r\n\
+         del \"{}\" 2>nul\r\n\
+         \r\n\
+         REM Start new version\r\n\
+         start \"\" \"{}\\MHW Radar.exe\"\r\n\
+         \r\n\
+         REM Self destruct\r\n\
+         del \"%~f0\"\r\n",
+        zip_path, app_dir, zip_path, app_dir
+    );
+
+    let bat_path = std::env::temp_dir().join("mhw-radar-update.bat");
+    std::fs::write(&bat_path, bat_content).map_err(|e| e.to_string())?;
+
+    let mut cmd = Command::new(&bat_path);
+    cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+
+    #[cfg(windows)]
+    {
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    cmd.spawn().map_err(|e| e.to_string())?;
+
+    eprintln!("[updater] bat spawned, exiting panel");
+    Ok(())
 }

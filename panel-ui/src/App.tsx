@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef, useLayoutEffect } from "react
 import { save } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
-import { API } from "./constants";
+import { API, GITHUB_API_LATEST, GITHUB_RELEASE_DOWNLOAD, btnStyle } from "./constants";
 import { useApi } from "./api";
 import { Sidebar } from "./components/Sidebar";
 import { HeaderBar } from "./components/HeaderBar";
@@ -20,6 +20,10 @@ export default function App() {
   const [totalRounds, setTotalRounds] = useState(0);
   const logEndRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
+
+  // ── 自动更新 ──
+  const [updateInfo, setUpdateInfo] = useState<{ tag: string; url: string } | null>(null);
+  const [updateStatus, setUpdateStatus] = useState<"idle" | "checking" | "available" | "downloading" | "error">("idle");
 
   // ── 任务计时平滑插值 ──
   const [displayTime, setDisplayTime] = useState<number | null>(null);
@@ -103,6 +107,47 @@ export default function App() {
     }
   }, [logEntries, autoScroll]);
 
+  // ── 检查更新 ──
+  useEffect(() => {
+    const check = async () => {
+      try {
+        const currentVersion = await invoke<string>("get_version");
+        const res = await fetch(GITHUB_API_LATEST);
+        if (!res.ok) throw new Error("API error");
+        const data = await res.json();
+        const latestTag = data.tag_name as string;
+        if (compareVersions(latestTag, currentVersion) > 0) {
+          const zipName = `MHW-Radar-${latestTag.replace(/^v/i, "")}.zip`;
+          setUpdateInfo({
+            tag: latestTag,
+            url: GITHUB_RELEASE_DOWNLOAD(latestTag, zipName),
+          });
+          setUpdateStatus("available");
+        }
+      } catch {
+        /* repo private or network unavailable — silent skip */
+      }
+    };
+    check();
+  }, []);
+
+  // ── 执行更新（下载 → bat → 退出） ──
+  const handleUpdate = useCallback(async () => {
+    if (!updateInfo) return;
+    setUpdateStatus("downloading");
+    try {
+      const tempDir = await invoke<string>("get_temp_dir");
+      const zipPath = `${tempDir}\\MHW-Radar-${updateInfo.tag.replace(/^v/i, "")}.zip`;
+      await invoke("download_update", { url: updateInfo.url, dest: zipPath });
+      const appDir = await invoke<string>("get_app_dir");
+      await invoke("spawn_updater", { appDir, zipPath });
+      await getCurrentWindow().destroy();
+    } catch (err) {
+      console.error("Update failed:", err);
+      setUpdateStatus("error");
+    }
+  }, [updateInfo]);
+
   // ── 设置更新 ──
   const updateSetting = async (patch: Partial<Settings>) => {
     if (!settings) return;
@@ -126,7 +171,7 @@ export default function App() {
   };
 
   // ── Scroll-spy ──
-  type SectionId = "basic-tools" | "hunting-log" | "log-analysis" | "check-update";
+  type SectionId = "basic-tools" | "hunting-log" | "log-analysis" | "software-updates" | "usage-guide";
 
   const [activeSection, setActiveSection] = useState<SectionId>("basic-tools");
 
@@ -134,7 +179,8 @@ export default function App() {
   const basicToolsRef = useRef<HTMLDivElement>(null);
   const huntingLogRef = useRef<HTMLDivElement>(null);
   const logAnalysisRef = useRef<HTMLDivElement>(null);
-  const checkUpdateRef = useRef<HTMLDivElement>(null);
+  const softwareUpdatesRef = useRef<HTMLDivElement>(null);
+  const usageGuideRef = useRef<HTMLDivElement>(null);
 
   const scrollLockRef = useRef<SectionId | null>(null);
   const scrollLockTimerRef = useRef<number | null>(null);
@@ -173,7 +219,7 @@ export default function App() {
       const maxScrollTop = panel.scrollHeight - panel.clientHeight;
 
       if (maxScrollTop > 0 && scrollTop >= maxScrollTop - 2) {
-        setActiveSection("check-update");
+        setActiveSection("usage-guide");
         return;
       }
 
@@ -181,7 +227,8 @@ export default function App() {
         { id: "basic-tools", el: basicToolsRef.current },
         { id: "hunting-log", el: huntingLogRef.current },
         { id: "log-analysis", el: logAnalysisRef.current },
-        { id: "check-update", el: checkUpdateRef.current },
+        { id: "software-updates", el: softwareUpdatesRef.current },
+        { id: "usage-guide", el: usageGuideRef.current },
       ];
 
       let current: SectionId = "basic-tools";
@@ -385,6 +432,49 @@ export default function App() {
           >
             <StatusBar status={status} displayTime={displayTime} />
 
+            {/* ── 更新通知栏 ── */}
+            {updateStatus === "available" && updateInfo && (
+              <div style={{
+                display: "flex", alignItems: "center", gap: 10,
+                padding: "8px 20px",
+                background: "rgba(191,167,107,0.12)",
+                borderBottom: "1px solid #bfa76b",
+              }}>
+                <span style={{ color: "#bfa76b", fontSize: 13, fontWeight: 500 }}>
+                  发现新版本 {updateInfo.tag}
+                </span>
+                <button onClick={handleUpdate} style={btnStyle}>立即更新</button>
+                <button
+                  onClick={() => setUpdateStatus("idle")}
+                  style={{ ...btnStyle, background: "transparent", color: "#8c8c8c", fontSize: 12 }}
+                >以后再说</button>
+              </div>
+            )}
+            {updateStatus === "downloading" && (
+              <div style={{
+                display: "flex", alignItems: "center", gap: 8,
+                padding: "8px 20px",
+                background: "rgba(191,167,107,0.08)",
+                borderBottom: "1px solid #331e12",
+              }}>
+                <span style={{ color: "#b0b0b0", fontSize: 13 }}>正在下载更新...</span>
+              </div>
+            )}
+            {updateStatus === "error" && (
+              <div style={{
+                display: "flex", alignItems: "center", gap: 10,
+                padding: "8px 20px",
+                background: "rgba(244,67,54,0.1)",
+                borderBottom: "1px solid #f44336",
+              }}>
+                <span style={{ color: "#f44336", fontSize: 13 }}>更新失败，请稍后重试</span>
+                <button
+                  onClick={() => setUpdateStatus("available")}
+                  style={{ ...btnStyle, background: "transparent", color: "#8ab4f8", fontSize: 12 }}
+                >重试</button>
+              </div>
+            )}
+
             <OpacitySection settings={settings} onChange={updateSetting} />
 
             <div ref={basicToolsRef} id="basic-tools">
@@ -447,9 +537,9 @@ export default function App() {
               </div>
             </div>
 
-            <div ref={checkUpdateRef} id="check-update" style={{ padding: "16px 20px", borderTop: "1px solid #331e12" }}>
-              <h2 style={{ color: "#dcdcdc", fontSize: 16, margin: "0 0 4px" }}>更新与说明</h2>
-              <p style={{ color: "#8c8c8c", fontSize: 12, margin: "0 0 16px" }}>版本管理、更新与相关说明</p>
+            <div ref={softwareUpdatesRef} id="software-updates" style={{ padding: "16px 20px", borderTop: "1px solid #331e12" }}>
+              <h2 style={{ color: "#dcdcdc", fontSize: 16, margin: "0 0 4px" }}>软件更新</h2>
+              <p style={{ color: "#8c8c8c", fontSize: 12, margin: "0 0 16px" }}>版本管理、更新与更新日志</p>
 
               <div style={{ display: "flex", gap: 12, marginBottom: 16 }}>
                 <div
@@ -462,7 +552,9 @@ export default function App() {
                   }}
                 >
                   <div style={{ color: "#bfa76b", fontSize: 14, marginBottom: 6 }}>自动更新</div>
-                  <div style={{ color: "#6c6c6c", fontSize: 12 }}>待补充</div>
+                  <div style={{ color: "#b0b0b0", fontSize: 12 }}>
+                    已是最新
+                  </div>
                   <div
                     style={{
                       display: "inline-block",
@@ -474,7 +566,7 @@ export default function App() {
                       border: "1px solid #555",
                     }}
                   >
-                    待补充
+                    已是最新
                   </div>
                 </div>
 
@@ -505,6 +597,7 @@ export default function App() {
                 </div>
               </div>
 
+              {/* ── 更新日志 ── */}
               <div
                 style={{
                   padding: 16,
@@ -514,8 +607,51 @@ export default function App() {
                   marginBottom: 16,
                 }}
               >
-                <div style={{ color: "#bfa76b", fontSize: 14, marginBottom: 8 }}>关于本软件</div>
-                <div style={{ color: "#d0d0d0", fontSize: 13, lineHeight: 1.7 }}>
+                <div style={{ color: "#bfa76b", fontSize: 14, marginBottom: 12 }}>更新日志</div>
+                {[
+                  { ver: "v0.1.0", date: "2026-05-16", items: [
+                    "初次发布，支持怪物血量、位置距离、攻击角度等基础信息显示",
+                    "内存地址精确寻址，支持 Alatreon 等怪物 AI 决策值读取",
+                    "回合制狩猎日志系统，自动记录每次攻击与怪物动作变更",
+                    "日志分页查看，支持导出全部/当前页",
+                    "透明悬浮窗覆盖层，支持快捷键 Ctrl+Shift+U 切换",
+                    "管理员权限适配与杀毒软件误报说明",
+                    "新增使用说明文档",
+                  ]},
+                ].map((entry) => (
+                  <div key={entry.ver} style={{ marginBottom: 12, paddingBottom: 12, borderBottom: "1px solid #2a1a10" }}>
+                    <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 6 }}>
+                      <span style={{ color: "#dcdcdc", fontSize: 14, fontWeight: 500 }}>{entry.ver}</span>
+                      <span style={{ color: "#6c6c6c", fontSize: 11 }}>{entry.date}</span>
+                    </div>
+                    <ul style={{ margin: 0, paddingLeft: 16, color: "#b0b0b0", fontSize: 12, lineHeight: 1.8 }}>
+                      {entry.items.map((item, i) => (
+                        <li key={i}>{item}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ))}
+                <div style={{ color: "#6c6c6c", fontSize: 11, textAlign: "center" }}>
+                  - 更多更新记录请访问 GitHub Releases -
+                </div>
+              </div>
+            </div>
+
+            <div ref={usageGuideRef} id="usage-guide" style={{ padding: "16px 20px", borderTop: "1px solid #331e12" }}>
+              <h2 style={{ color: "#dcdcdc", fontSize: 16, margin: "0 0 4px" }}>使用说明</h2>
+              <p style={{ color: "#8c8c8c", fontSize: 12, margin: "0 0 16px" }}>关于本软件与相关声明</p>
+
+              <div
+                style={{
+                  padding: 16,
+                  borderRadius: 6,
+                  border: "1px solid #331e12",
+                  background: "rgba(0,0,0,0.15)",
+                  marginBottom: 16,
+                }}
+              >
+                <div style={{ color: "#bfa76b", fontSize: 15, marginBottom: 8 }}>关于本软件</div>
+                <div style={{ color: "#d0d0d0", fontSize: 14, lineHeight: 1.8 }}>
                   <div style={{ marginBottom: 10 }}>
                     MHW Radar 是一款为《怪物猎人：世界》玩家打造的实时狩猎辅助工具。
                     目前还在早期的开发阶段，请谨慎使用。
@@ -543,7 +679,7 @@ export default function App() {
                   background: "rgba(0,0,0,0.08)",
                 }}
               >
-                <div style={{ color: "#b0b0b0", fontSize: 12, lineHeight: 1.8 }}>
+                <div style={{ color: "#b0b0b0", fontSize: 13, lineHeight: 2 }}>
                   本工具为开源免费软件，仅供学习交流使用，禁止用于商业用途。<br />
                   所有游戏相关数据、美术素材及商标版权均归属 CAPCOM CO., LTD.<br />
                   《怪物猎人：世界》《怪物猎人：世界·冰原》© CAPCOM CO., LTD. ALL RIGHTS RESERVED.<br />
@@ -558,7 +694,7 @@ export default function App() {
   );
 }
 
-// ── Local type ──
+// ── Local types ──
 interface PanelStatus {
   connected: boolean;
   in_quest: boolean;
@@ -566,4 +702,14 @@ interface PanelStatus {
   monster_name: string | null;
   quest_elapsed_ms: number | null;
   quest_name: string | null;
+}
+
+function compareVersions(tag: string, local: string): number {
+  const pa = tag.replace(/^v/i, "").split(".").map(Number);
+  const pb = local.replace(/^v/i, "").split(".").map(Number);
+  for (let i = 0; i < 3; i++) {
+    if ((pa[i] ?? 0) > (pb[i] ?? 0)) return 1;
+    if ((pa[i] ?? 0) < (pb[i] ?? 0)) return -1;
+  }
+  return 0;
 }

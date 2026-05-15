@@ -65,7 +65,7 @@ export function Sidebar({
           onClick={() => onNavigate("log-analysis")}
         />
         <NavButton
-          label="更新与说明"
+          label="软件更新"
           icon={
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <polyline points="23 4 23 10 17 10"/>
@@ -73,13 +73,25 @@ export function Sidebar({
               <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
             </svg>
           }
-          active={activeSection === "check-update"}
-          onClick={() => onNavigate("check-update")}
+          active={activeSection === "software-updates"}
+          onClick={() => onNavigate("software-updates")}
+        />
+        <NavButton
+          label="使用说明"
+          icon={
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="10"/>
+              <line x1="12" y1="16" x2="12" y2="12"/>
+              <line x1="12" y1="8" x2="12.01" y2="8"/>
+            </svg>
+          }
+          active={activeSection === "usage-guide"}
+          onClick={() => onNavigate("usage-guide")}
         />
       </div>
       <div style={{ marginTop: "auto", padding: "0 14px 14px", display: "flex", flexDirection: "column", gap: 2 }}>
-        <span style={{ color: "#b0b0b0", fontSize: 12, lineHeight: 1.5 }}>MHW Radar</span>
-        <span style={{ color: "#8c8c8c", fontSize: 11, lineHeight: 1.5 }}>数据由mhdatalab.com提供</span>
+        <span style={{ color: "#b0b0b0", fontSize: 13, lineHeight: 1.5 }}>MHW Radar</span>
+        <span style={{ color: "#8c8c8c", fontSize: 12, lineHeight: 1.5 }}>数据由mhdatalab.com提供</span>
       </div>
     </div>
   );
