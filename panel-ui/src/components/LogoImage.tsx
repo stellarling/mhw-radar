@@ -14,7 +14,7 @@ export function LogoImage({ size, fill }: { size?: number; fill?: boolean }) {
       alt="MHW Radar"
       style={{
         width: fill ? "100%" : (size ?? 100),
-        opacity: 0.6,
+        opacity: 0.9,
         display: "block",
       }}
     />

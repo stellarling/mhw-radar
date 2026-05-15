@@ -9,11 +9,9 @@ import { fileURLToPath } from "url";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, "..");
 
-// 读取版本号
-const tauriConf = JSON.parse(
-  readFileSync(join(ROOT, "panel-ui", "src-tauri", "tauri.conf.json"), "utf-8")
-);
-const version = tauriConf.version;
+// 读取版本号（以 Cargo.toml 为准）
+const cargoToml = readFileSync(join(ROOT, "panel-ui", "src-tauri", "Cargo.toml"), "utf-8");
+const version = cargoToml.match(/^version\s*=\s*"([^"]+)"/m)?.[1] ?? "0.0.0";
 
 // 确保已构建
 if (!existsSync(join(ROOT, "engine", "target", "release", "mhw-radar.exe"))) {
@@ -58,7 +56,7 @@ mkdirSync(distDir, { recursive: true });
 copyFileSync(panelExePath, join(distDir, "MHW Radar.exe"));
 console.log(`  → MHW Radar.exe`);
 
-// 复制 mhw-radar.exe 到 resources/bin/ 子目录（不污染用户视野）
+// 复制 mhw-radar.exe 到 resources/bin/ 子目录
 const binDir = join(distDir, "resources", "bin");
 mkdirSync(binDir, { recursive: true });
 copyFileSync(join(ROOT, "engine", "target", "release", "mhw-radar.exe"), join(binDir, "mhw-radar.exe"));

@@ -1,12 +1,12 @@
 {
   "productName": "MHW Radar",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "identifier": "com.mhw-radar.panel",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
-    "beforeDevCommand": "cargo build --release --manifest-path ../engine/Cargo.toml && npm run dev",
-    "beforeBuildCommand": "cargo build --release --manifest-path ../engine/Cargo.toml && npm run build"
+    "beforeDevCommand": "node ../scripts/sync-version.mjs && cargo build --release --manifest-path ../engine/Cargo.toml && npm run dev",
+    "beforeBuildCommand": "node ../scripts/sync-version.mjs && cargo build --release --manifest-path ../engine/Cargo.toml && npm run build"
   },
   "app": {
     "windows": [

@@ -24,6 +24,7 @@ export default function App() {
   // ── 自动更新 ──
   const [updateInfo, setUpdateInfo] = useState<{ tag: string; url: string } | null>(null);
   const [updateStatus, setUpdateStatus] = useState<"idle" | "checking" | "available" | "downloading" | "error">("idle");
+  const [appVersion, setAppVersion] = useState("");
 
   // ── 任务计时平滑插值 ──
   const [displayTime, setDisplayTime] = useState<number | null>(null);
@@ -112,6 +113,7 @@ export default function App() {
     const check = async () => {
       try {
         const currentVersion = await invoke<string>("get_version");
+        setAppVersion(currentVersion);
         const res = await fetch(GITHUB_API_LATEST);
         if (!res.ok) throw new Error("API error");
         const data = await res.json();
@@ -416,6 +418,7 @@ export default function App() {
 
         <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
           <HeaderBar
+            version={appVersion}
             onScrollBottom={scrollToBottom}
             onClose={closeWindow}
           />
