@@ -27,10 +27,10 @@
 
 ### 面板设置
 
-点击悬浮窗左下角的齿轮图标，或在任务栏托盘图标上选择「打开面板」，即可打开设置面板：
+半透明悬浮窗默认开启，如不需要可以快捷键关闭，打开设置面板后可以看到：
 
 - **基础工具**：开关各项显示内容（血量、距离、角度、招式名等）
-- **狩猎日志**：按回合查看历史战斗记录，支持导出文本
+- **狩猎日志**：按场次查看历史战斗记录，支持导出文本
 - **软件更新**：检查更新并自动升级
 
 ### 快捷键
@@ -47,64 +47,29 @@
 - [Node.js](https://nodejs.org/) 20+
 - 目标平台：`x86_64-pc-windows-msvc`（仅 Windows）
 
-### 开发模式
-
-完整启动（编译 engine + Tauri 面板 + Vite 开发服务器）：
+### 开发
 
 ```powershell
+# 完整启动（编译 engine + Tauri 面板 + Vite）
 npm run dev
-```
 
-仅启动前端（不改 Rust 代码时使用，跳过编译）：
-
-```powershell
+# 仅启动前端（不改 Rust 时使用）
 npm run dev:frontend
 ```
 
-### 构建发布
+### 打包
 
 ```powershell
-# 编译 + 打包为 zip
 npm run package
-
-# 产物输出到 dist/MHW-Radar-v<version>.zip
+# 产物：dist/MHW-Radar-v<version>.zip
 ```
-
-发布步骤：
-
-1. 更新 `panel-ui/src-tauri/tauri.conf.json` 中的版本号
-2. 执行 `npm run package`
-3. 创建 git tag 并推送至 GitHub
-4. 在 GitHub Releases 页面上传生成的 zip 文件
 
 ## 项目结构
 
 ```text
-├── engine/                          # Rust 数据读取引擎 (mhw-radar.exe)
-│   └── src/
-│       ├── main.rs                  # 入口，初始化悬浮窗 + IPC 服务器
-│       ├── memory.rs                # 底层内存 I/O（Windows API）
-│       ├── reader.rs                # 游戏进程管理、数据读取、角度/血量/计时解析
-│       ├── overlay.rs               # egui 透明悬浮窗渲染
-│       ├── ipc.rs                   # HTTP API 服务器 (127.0.0.1:17320)
-│       ├── log.rs                   # 回合制日志存储
-│       ├── types.rs                 # 共享数据类型
-│       ├── game_data.rs             # 招式/怪物/任务名称查表（编译时嵌入 JSON）
-│       └── data/                    # JSON 数据文件
-│           ├── action_names.json
-│           ├── monster_names.json
-│           ├── quest_names.json
-│           └── monster_ai_addresses.json
-│
-├── panel-ui/                        # Tauri 设置面板 (MHW Radar.exe)
-│   ├── src/                         # React + TypeScript 前端
-│   │   ├── App.tsx                  # 主面板 UI
-│   │   ├── components/              # UI 组件
-│   │   └── constants.ts             # 常量与配置
-│   └── src-tauri/                   # Tauri Rust 后端
-│       └── src/main.rs              # 进程管理、IPC 绑定、更新逻辑
-│
-├── scripts/package.mjs              # 打包脚本
+├── engine/           # Rust 数据读取引擎 + egui 悬浮窗 (mhw-radar.exe)
+├── panel-ui/         # Tauri 设置面板 (MHW Radar.exe)
+├── scripts/          # 打包脚本
 └── README.md
 ```
 
@@ -135,12 +100,21 @@ npm run package
 
 - 数据采集与 UI 渲染分离：后台线程独占内存 I/O，主线程仅轮询共享缓存
 - 招式名称查询使用 `HashMap`，编译时 `include_str!` 嵌入 JSON，启动时一次解析，运行时零 I/O
-- 回合制日志系统：每次新任务自动开新回合，支持 100 轮 × 2000 条记录
+- 回合制日志系统：每次新任务自动开新回合，目前支持 100 轮 × 2000 条记录
 - 覆盖式窗口不捕获鼠标/键盘焦点，不影响游戏操作
+
+## 许可协议
+
+Licensed under either of
+
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
+- MIT license ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
+
+at your option.
 
 ## 免责声明
 
-本工具为开源免费软件，仅供学习交流使用，禁止用于商业用途。
+本工具为开源免费软件，仅供学习交流使用。
 
 所有游戏相关数据、美术素材及商标版权均归属 CAPCOM CO., LTD.
 《怪物猎人：世界》《怪物猎人：世界·冰原》© CAPCOM CO., LTD. ALL RIGHTS RESERVED.
