@@ -72,7 +72,6 @@ fn command_silent(program: &str) -> Command {
 /// 兜底清理可能由上一次异常退出留下的雷达进程。
 ///
 /// 注意：这里按镜像名清理的是 mhw-radar.exe，不会匹配 Tauri 面板进程本身。
-/// 如果你希望允许用户同时独立运行 engine，可删除 spawn_radar() 中对本函数的调用。
 fn kill_radar_by_image_name() {
     #[cfg(windows)]
     {
@@ -205,6 +204,7 @@ fn main() {
             get_temp_dir,
             download_update,
             spawn_updater,
+            open_external_url,
         ])
         .on_window_event(|_window, event| {
             if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
@@ -246,6 +246,76 @@ fn get_app_dir() -> String {
 #[tauri::command]
 fn get_temp_dir() -> String {
     std::env::temp_dir().to_string_lossy().to_string()
+}
+
+fn normalize_external_url(url: &str) -> Result<String, String> {
+    let trimmed = url.trim();
+    if trimmed.is_empty() {
+        return Err("链接为空".to_string());
+    }
+
+    let normalized = if trimmed.starts_with("https://") || trimmed.starts_with("http://") {
+        trimmed.to_string()
+    } else {
+        format!("https://{}", trimmed.trim_start_matches('/'))
+    };
+
+    if !normalized.starts_with("https://github.com/") && normalized != "https://github.com" {
+        return Err("只允许打开 GitHub 链接".to_string());
+    }
+
+    Ok(normalized)
+}
+
+/// 使用系统默认浏览器打开 GitHub 链接。
+#[tauri::command]
+fn open_external_url(url: String) -> Result<(), String> {
+    let normalized = normalize_external_url(&url)?;
+
+    #[cfg(windows)]
+    {
+        let status = command_silent("rundll32.exe")
+            .args(["url.dll,FileProtocolHandler", &normalized])
+            .status()
+            .map_err(|e| format!("无法唤起系统浏览器: {}", e))?;
+
+        if !status.success() {
+            return Err("系统浏览器打开失败".to_string());
+        }
+
+        return Ok(());
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let status = Command::new("open")
+            .arg(&normalized)
+            .status()
+            .map_err(|e| format!("无法唤起系统浏览器: {}", e))?;
+
+        if !status.success() {
+            return Err("系统浏览器打开失败".to_string());
+        }
+
+        return Ok(());
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let status = Command::new("xdg-open")
+            .arg(&normalized)
+            .status()
+            .map_err(|e| format!("无法唤起系统浏览器: {}", e))?;
+
+        if !status.success() {
+            return Err("系统浏览器打开失败".to_string());
+        }
+
+        return Ok(());
+    }
+
+    #[allow(unreachable_code)]
+    Err("当前平台不支持自动打开链接".to_string())
 }
 
 fn ps_single_quote(value: &str) -> String {

@@ -2,8 +2,7 @@ import { useState, useEffect, useCallback, useRef, useLayoutEffect } from "react
 import { save } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
-import { open } from "@tauri-apps/plugin-shell";
-import { API, GITHUB_API_LATEST, btnStyle } from "./constants";
+import { API, GITHUB_API_LATEST, GITHUB_REPO, btnStyle } from "./constants";
 import { useApi } from "./api";
 import { Sidebar } from "./components/Sidebar";
 import { HeaderBar } from "./components/HeaderBar";
@@ -24,9 +23,11 @@ export default function App() {
 
   // ── 自动更新 ──
   const [updateInfo, setUpdateInfo] = useState<{ tag: string; url: string; fileName: string } | null>(null);
-  const [updateStatus, setUpdateStatus] = useState<"idle" | "checking" | "available" | "downloading" | "error">("idle");
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus>("checking");
   const [updateError, setUpdateError] = useState("");
   const [appVersion, setAppVersion] = useState("");
+  const [latestVersion, setLatestVersion] = useState("");
+  const githubUrl = `https://github.com/${GITHUB_REPO}`;
 
   // ── 任务计时平滑插值 ──
   const [displayTime, setDisplayTime] = useState<number | null>(null);
@@ -111,35 +112,63 @@ export default function App() {
   }, [logEntries, autoScroll]);
 
   // ── 检查更新 ──
-  useEffect(() => {
-    const check = async () => {
-      try {
-        const currentVersion = await invoke<string>("get_version");
-        setAppVersion(currentVersion);
-        const res = await fetch(GITHUB_API_LATEST);
-        if (!res.ok) throw new Error("API error");
-        const data = await res.json();
-        const latestTag = data.tag_name as string;
+  const checkForUpdates = useCallback(async () => {
+    setUpdateStatus("checking");
+    setUpdateError("");
 
-        if (compareVersions(latestTag, currentVersion) > 0) {
-          const asset = findUpdateAsset(data, latestTag);
-          if (!asset) {
-            throw new Error(`Release ${latestTag} 中未找到 MHW-Radar-vX.Y.Z.zip 更新包`);
-          }
+    try {
+      const currentVersion = await invoke<string>("get_version");
+      setAppVersion(currentVersion);
 
-          setUpdateInfo({
-            tag: latestTag,
-            url: asset.browser_download_url,
-            fileName: asset.name,
-          });
-          setUpdateError("");
-          setUpdateStatus("available");
-        }
-      } catch {
-        /* repo private or network unavailable — silent skip */
+      const res = await fetch(GITHUB_API_LATEST, { cache: "no-store" });
+      if (!res.ok) {
+        throw new Error(`GitHub API 返回 ${res.status}`);
       }
-    };
-    check();
+
+      const data = await res.json();
+      const latestTag = String((data as { tag_name?: unknown }).tag_name ?? "");
+      if (!latestTag) {
+        throw new Error("GitHub Release 未返回 tag_name");
+      }
+
+      setLatestVersion(latestTag);
+
+      if (compareVersions(latestTag, currentVersion) > 0) {
+        const asset = findUpdateAsset(data, latestTag);
+        if (!asset) {
+          throw new Error(`Release ${latestTag} 中未找到 MHW-Radar-vX.Y.Z.zip 更新包`);
+        }
+
+        setUpdateInfo({
+          tag: latestTag,
+          url: ensureHttpsUrl(asset.browser_download_url),
+          fileName: asset.name,
+        });
+        setUpdateStatus("available");
+      } else {
+        setUpdateInfo(null);
+        setUpdateStatus("latest");
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setUpdateInfo(null);
+      setUpdateError(message);
+      setUpdateStatus("error");
+    }
+  }, []);
+
+  useEffect(() => {
+    void checkForUpdates();
+  }, [checkForUpdates]);
+
+  const openExternal = useCallback(async (url: string) => {
+    try {
+      await invoke("open_external_url", { url: ensureHttpsUrl(url) });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setUpdateError(message);
+      setUpdateStatus((current) => current === "available" ? current : "error");
+    }
   }, []);
 
   // ── 执行更新（下载 → bat → 退出） ──
@@ -569,47 +598,52 @@ export default function App() {
                   }}
                 >
                   <div style={{ color: "#bfa76b", fontSize: 14, marginBottom: 6 }}>自动更新</div>
-                  <div style={{ color: updateStatus === "available" ? "#bfa76b" : "#b0b0b0", fontSize: 12 }}>
-                    {updateStatus === "available"
-                      ? `发现新版本 ${updateInfo?.tag ?? ""}`
-                      : updateStatus === "downloading"
-                        ? "正在下载更新..."
+                  <div
+                    style={{
+                      color: updateStatus === "available"
+                        ? "#bfa76b"
                         : updateStatus === "error"
-                          ? `更新失败${updateError ? `: ${updateError}` : ""}`
-                          : "已是最新"}
+                          ? "#ff8a80"
+                          : "#b0b0b0",
+                      fontSize: 12,
+                      lineHeight: 1.7,
+                    }}
+                  >
+                    {formatUpdateStatus(updateStatus, updateInfo, updateError, latestVersion)}
                   </div>
-                  {updateStatus === "available" && updateInfo && (
-                    <div
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+                    {updateStatus === "available" && updateInfo && (
+                      <button
+                        type="button"
+                        style={{
+                          ...btnStyle,
+                          padding: "2px 8px",
+                          fontSize: 11,
+                          color: "#bfa76b",
+                          border: "1px solid #bfa76b",
+                        }}
+                        onClick={handleUpdate}
+                      >
+                        立即更新
+                      </button>
+                    )}
+                    <button
+                      type="button"
                       style={{
-                        display: "inline-block",
-                        marginTop: 8,
+                        ...btnStyle,
                         padding: "2px 8px",
-                        borderRadius: 3,
-                        fontSize: 11,
-                        color: "#bfa76b",
-                        border: "1px solid #bfa76b",
-                        cursor: "pointer",
-                      }}
-                      onClick={handleUpdate}
-                    >
-                      立即更新
-                    </div>
-                  )}
-                  {updateStatus !== "available" && (
-                    <div
-                      style={{
-                        display: "inline-block",
-                        marginTop: 8,
-                        padding: "2px 8px",
-                        borderRadius: 3,
                         fontSize: 11,
                         color: "#8c8c8c",
                         border: "1px solid #555",
+                        opacity: updateStatus === "checking" || updateStatus === "downloading" ? 0.55 : 1,
+                        cursor: updateStatus === "checking" || updateStatus === "downloading" ? "not-allowed" : "pointer",
                       }}
+                      disabled={updateStatus === "checking" || updateStatus === "downloading"}
+                      onClick={() => void checkForUpdates()}
                     >
-                      {updateStatus === "downloading" ? "下载中" : updateStatus === "error" ? "失败" : "已是最新"}
-                    </div>
-                  )}
+                      {updateStatus === "checking" ? "检查中" : "重新检查"}
+                    </button>
+                  </div>
                 </div>
 
                 <div
@@ -623,9 +657,9 @@ export default function App() {
                 >
                   <div style={{ color: "#bfa76b", fontSize: 14, marginBottom: 6 }}>GitHub</div>
                   <div
-                    onClick={() => open("https://github.com/stellarling/mhw-radar")}
+                    onClick={() => void openExternal(githubUrl)}
                     style={{ color: "#8ab4f8", fontSize: 12, cursor: "pointer" }}
-                  >https://github.com/stellarling/mhw-radar</div>
+                  >{githubUrl}</div>
                   <div
                     style={{
                       display: "inline-block",
@@ -638,7 +672,7 @@ export default function App() {
                     }}
                   >
                     <span
-                      onClick={() => open("https://github.com/stellarling/mhw-radar")}
+                      onClick={() => void openExternal(githubUrl)}
                       style={{ color: "#8ab4f8", fontSize: 11, cursor: "pointer" }}
                     >打开 GitHub</span>
                   </div>
@@ -745,6 +779,8 @@ export default function App() {
 }
 
 // ── Local types ──
+type UpdateStatus = "idle" | "checking" | "available" | "latest" | "downloading" | "error";
+
 interface PanelStatus {
   connected: boolean;
   in_quest: boolean;
@@ -759,6 +795,37 @@ type GitHubReleaseAsset = {
   name: string;
   browser_download_url: string;
 };
+
+function ensureHttpsUrl(url: string): string {
+  const trimmed = url.trim();
+  if (/^https?:\/\//i.test(trimmed)) {
+    return trimmed;
+  }
+  return `https://${trimmed.replace(/^\/+/, "")}`;
+}
+
+function formatUpdateStatus(
+  status: UpdateStatus,
+  updateInfo: { tag: string; url: string; fileName: string } | null,
+  error: string,
+  latestVersion: string,
+): string {
+  switch (status) {
+    case "checking":
+      return "正在检查更新...";
+    case "available":
+      return `发现新版本 ${updateInfo?.tag ?? ""}`;
+    case "downloading":
+      return "正在下载更新...";
+    case "latest":
+      return latestVersion ? `已是最新（${latestVersion}）` : "已是最新";
+    case "error":
+      return `检查失败${error ? `: ${error}` : ""}`;
+    case "idle":
+    default:
+      return "尚未检查";
+  }
+}
 
 function findUpdateAsset(data: unknown, latestTag: string): GitHubReleaseAsset | null {
   const assets = (data as { assets?: GitHubReleaseAsset[] }).assets ?? [];
