@@ -247,72 +247,152 @@ fn get_temp_dir() -> String {
     std::env::temp_dir().to_string_lossy().to_string()
 }
 
-/// 通过 PowerShell 从 GitHub 下载更新包
-#[tauri::command]
-fn download_update(url: String, dest: String) -> Result<(), String> {
-    let status = Command::new("powershell")
-        .args(["-NoProfile", "-Command", &format!(
-            "[Net.ServicePointManager]::SecurityProtocol = \
-             [Net.SecurityProtocolType]::Tls12; \
-             Invoke-WebRequest -Uri '{}' -OutFile '{}'",
-            url, dest
-        )])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map_err(|e| format!("无法启动 PowerShell: {}", e))?;
-
-    if status.success() {
-        Ok(())
-    } else {
-        Err("下载失败，请检查网络连接后重试".to_string())
-    }
+fn ps_single_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
 }
 
-/// 生成更新 bat 并静默启动，然后面板退出
-///
-/// `app_dir` — MHW Radar.exe 所在目录
-/// `zip_path` — 已下载到本地的更新包完整路径
+fn cmd_set_value(value: &str) -> String {
+    value.replace('"', "\"\"")
+}
+
+/// 通过 PowerShell 从 GitHub 下载更新包。
 #[tauri::command]
-fn spawn_updater(app_dir: String, zip_path: String) -> Result<(), String> {
-    let bat_content = format!(
-        "@echo off\r\n\
-         setlocal\r\n\
-         \r\n\
-         REM Wait for MHW Radar.exe to fully exit\r\n\
-         ping 127.0.0.1 -n 4 > nul\r\n\
-         \r\n\
-         REM Kill engine if still alive\r\n\
-         taskkill /f /im mhw-radar.exe 2>nul\r\n\
-         \r\n\
-         REM Unzip new version over application directory\r\n\
-         powershell -NoProfile -Command \"& {{ Expand-Archive -Path '{}' -DestinationPath '{}' -Force }}\" 2>nul\r\n\
-         \r\n\
-         REM Clean up zip\r\n\
-         del \"{}\" 2>nul\r\n\
-         \r\n\
-         REM Start new version\r\n\
-         start \"\" \"{}\\MHW Radar.exe\"\r\n\
-         \r\n\
-         REM Self destruct\r\n\
-         del \"%~f0\"\r\n",
-        zip_path, app_dir, zip_path, app_dir
+fn download_update(url: String, dest: String) -> Result<(), String> {
+    if !url.starts_with("https://github.com/") && !url.starts_with("https://objects.githubusercontent.com/") {
+        return Err("更新包下载地址不是可信的 GitHub 地址".to_string());
+    }
+
+    if let Some(parent) = std::path::Path::new(&dest).parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("无法创建临时目录: {}", e))?;
+    }
+
+    let _ = std::fs::remove_file(&dest);
+
+    let script = format!(
+        "$ErrorActionPreference = 'Stop'; \
+         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; \
+         Invoke-WebRequest -Uri {} -OutFile {} -UseBasicParsing; \
+         if (!(Test-Path -LiteralPath {})) {{ throw '更新包下载后不存在' }}; \
+         if ((Get-Item -LiteralPath {}).Length -le 0) {{ throw '更新包为空文件' }}",
+        ps_single_quote(&url),
+        ps_single_quote(&dest),
+        ps_single_quote(&dest),
+        ps_single_quote(&dest),
     );
 
-    let bat_path = std::env::temp_dir().join("mhw-radar-update.bat");
-    std::fs::write(&bat_path, bat_content).map_err(|e| e.to_string())?;
-
-    let mut cmd = Command::new(&bat_path);
-    cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+    let mut cmd = Command::new("powershell.exe");
+    cmd.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &script])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null());
 
     #[cfg(windows)]
     {
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
 
-    cmd.spawn().map_err(|e| e.to_string())?;
+    let output = cmd
+        .output()
+        .map_err(|e| format!("无法启动 PowerShell 下载更新包: {}", e))?;
 
-    eprintln!("[updater] bat spawned, exiting panel");
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        if stderr.is_empty() {
+            return Err("下载失败，请检查网络连接或 GitHub Release 附件名称".to_string());
+        }
+        return Err(format!("下载失败: {}", stderr));
+    }
+
+    let size = std::fs::metadata(&dest)
+        .map_err(|e| format!("无法读取更新包: {}", e))?
+        .len();
+
+    if size == 0 {
+        return Err("下载失败：更新包为空文件".to_string());
+    }
+
+    Ok(())
+}
+
+/// 生成更新 cmd 并静默启动，然后面板退出。
+///
+/// `app_dir` — MHW Radar.exe 所在目录
+/// `zip_path` — 已下载到本地的更新包完整路径
+#[tauri::command]
+fn spawn_updater(app_dir: String, zip_path: String) -> Result<(), String> {
+    let app_exe = std::path::Path::new(&app_dir).join("MHW Radar.exe");
+    if !app_exe.exists() {
+        return Err(format!("未找到主程序: {}", app_exe.to_string_lossy()));
+    }
+
+    if !std::path::Path::new(&zip_path).exists() {
+        return Err(format!("未找到已下载的更新包: {}", zip_path));
+    }
+
+    let log_path = std::env::temp_dir().join("mhw-radar-update.log");
+    let cmd_path = std::env::temp_dir().join("mhw-radar-update.cmd");
+
+    let cmd_content = format!(
+        "@echo off\r\n\
+         setlocal EnableExtensions\r\n\
+         set \"APP_DIR={}\"\r\n\
+         set \"ZIP_PATH={}\"\r\n\
+         set \"LOG_PATH={}\"\r\n\
+         \r\n\
+         echo [%date% %time%] MHW Radar updater started > \"%LOG_PATH%\"\r\n\
+         echo APP_DIR=%APP_DIR% >> \"%LOG_PATH%\"\r\n\
+         echo ZIP_PATH=%ZIP_PATH% >> \"%LOG_PATH%\"\r\n\
+         \r\n\
+         REM Wait for the current panel process to exit before replacing MHW Radar.exe.\r\n\
+         for /l %%i in (1,1,60) do (\r\n\
+           tasklist /fi \"imagename eq MHW Radar.exe\" | find /i \"MHW Radar.exe\" >nul\r\n\
+           if errorlevel 1 goto panel_exited\r\n\
+           timeout /t 1 /nobreak >nul\r\n\
+         )\r\n\
+         echo Panel process did not exit in time. Continue anyway. >> \"%LOG_PATH%\"\r\n\
+         \r\n\
+         :panel_exited\r\n\
+         echo [%date% %time%] Panel exited. >> \"%LOG_PATH%\"\r\n\
+         taskkill /f /im mhw-radar.exe >> \"%LOG_PATH%\" 2>>&1\r\n\
+         \r\n\
+         powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \"& {{ $ErrorActionPreference = 'Stop'; Expand-Archive -LiteralPath $env:ZIP_PATH -DestinationPath $env:APP_DIR -Force }}\" >> \"%LOG_PATH%\" 2>>&1\r\n\
+         if errorlevel 1 (\r\n\
+           echo [%date% %time%] Expand-Archive failed. >> \"%LOG_PATH%\"\r\n\
+           start \"\" notepad.exe \"%LOG_PATH%\"\r\n\
+           exit /b 1\r\n\
+         )\r\n\
+         \r\n\
+         del \"%ZIP_PATH%\" >> \"%LOG_PATH%\" 2>>&1\r\n\
+         echo [%date% %time%] Starting updated app. >> \"%LOG_PATH%\"\r\n\
+         start \"\" /d \"%APP_DIR%\" \"%APP_DIR%\\MHW Radar.exe\"\r\n\
+         \r\n\
+         del \"%~f0\" >nul 2>nul\r\n",
+        cmd_set_value(&app_dir),
+        cmd_set_value(&zip_path),
+        cmd_set_value(&log_path.to_string_lossy()),
+    );
+
+    std::fs::write(&cmd_path, cmd_content)
+        .map_err(|e| format!("无法写入更新脚本: {}", e))?;
+
+    let mut cmd = Command::new(&cmd_path);
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+
+    #[cfg(windows)]
+    {
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    cmd.spawn()
+        .map_err(|e| format!("无法启动更新脚本: {}", e))?;
+
+    eprintln!(
+        "[updater] updater spawned: {}, log: {}",
+        cmd_path.to_string_lossy(),
+        log_path.to_string_lossy()
+    );
+
     Ok(())
 }

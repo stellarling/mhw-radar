@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef, useLayoutEffect } from "react
 import { save } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
-import { API, GITHUB_API_LATEST, GITHUB_RELEASE_DOWNLOAD, btnStyle } from "./constants";
+import { API, GITHUB_API_LATEST, btnStyle } from "./constants";
 import { useApi } from "./api";
 import { Sidebar } from "./components/Sidebar";
 import { HeaderBar } from "./components/HeaderBar";
@@ -22,8 +22,9 @@ export default function App() {
   const [autoScroll, setAutoScroll] = useState(true);
 
   // ── 自动更新 ──
-  const [updateInfo, setUpdateInfo] = useState<{ tag: string; url: string } | null>(null);
+  const [updateInfo, setUpdateInfo] = useState<{ tag: string; url: string; fileName: string } | null>(null);
   const [updateStatus, setUpdateStatus] = useState<"idle" | "checking" | "available" | "downloading" | "error">("idle");
+  const [updateError, setUpdateError] = useState("");
   const [appVersion, setAppVersion] = useState("");
 
   // ── 任务计时平滑插值 ──
@@ -118,12 +119,19 @@ export default function App() {
         if (!res.ok) throw new Error("API error");
         const data = await res.json();
         const latestTag = data.tag_name as string;
+
         if (compareVersions(latestTag, currentVersion) > 0) {
-          const zipName = `MHW-Radar-${latestTag.replace(/^v/i, "")}.zip`;
+          const asset = findUpdateAsset(data, latestTag);
+          if (!asset) {
+            throw new Error(`Release ${latestTag} 中未找到 MHW-Radar-vX.Y.Z.zip 更新包`);
+          }
+
           setUpdateInfo({
             tag: latestTag,
-            url: GITHUB_RELEASE_DOWNLOAD(latestTag, zipName),
+            url: asset.browser_download_url,
+            fileName: asset.name,
           });
+          setUpdateError("");
           setUpdateStatus("available");
         }
       } catch {
@@ -138,14 +146,17 @@ export default function App() {
     if (!updateInfo) return;
     setUpdateStatus("downloading");
     try {
+      setUpdateError("");
       const tempDir = await invoke<string>("get_temp_dir");
-      const zipPath = `${tempDir}\\MHW-Radar-${updateInfo.tag.replace(/^v/i, "")}.zip`;
+      const zipPath = `${tempDir}\\${updateInfo.fileName}`;
       await invoke("download_update", { url: updateInfo.url, dest: zipPath });
       const appDir = await invoke<string>("get_app_dir");
       await invoke("spawn_updater", { appDir, zipPath });
       await getCurrentWindow().destroy();
     } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
       console.error("Update failed:", err);
+      setUpdateError(message);
       setUpdateStatus("error");
     }
   }, [updateInfo]);
@@ -470,7 +481,9 @@ export default function App() {
                 background: "rgba(244,67,54,0.1)",
                 borderBottom: "1px solid #f44336",
               }}>
-                <span style={{ color: "#f44336", fontSize: 13 }}>更新失败，请稍后重试</span>
+                <span style={{ color: "#f44336", fontSize: 13 }}>
+                  更新失败{updateError ? `：${updateError}` : "，请稍后重试"}
+                </span>
                 <button
                   onClick={() => setUpdateStatus("available")}
                   style={{ ...btnStyle, background: "transparent", color: "#8ab4f8", fontSize: 12 }}
@@ -612,15 +625,17 @@ export default function App() {
               >
                 <div style={{ color: "#bfa76b", fontSize: 14, marginBottom: 12 }}>更新日志</div>
                 {[
-                  { ver: "v0.1.0", date: "2026-05-16", items: [
-                    "初次发布，支持怪物血量、位置距离、攻击角度等基础信息显示",
-                    "内存地址精确寻址，支持 Alatreon 等怪物 AI 决策值读取",
-                    "回合制狩猎日志系统，自动记录每次攻击与怪物动作变更",
-                    "日志分页查看，支持导出全部/当前页",
-                    "透明悬浮窗覆盖层，支持快捷键 Ctrl+Shift+U 切换",
-                    "管理员权限适配与杀毒软件误报说明",
-                    "新增使用说明文档",
-                  ]},
+                  {
+                    ver: "v0.1.0", date: "2026-05-16", items: [
+                      "初次发布，支持怪物血量、位置距离、攻击角度等基础信息显示",
+                      "内存地址精确寻址，支持 Alatreon 等怪物 AI 决策值读取",
+                      "回合制狩猎日志系统，自动记录每次攻击与怪物动作变更",
+                      "日志分页查看，支持导出全部/当前页",
+                      "透明悬浮窗覆盖层，支持快捷键 Ctrl+Shift+U 切换",
+                      "管理员权限适配与杀毒软件误报说明",
+                      "新增使用说明文档",
+                    ]
+                  },
                 ].map((entry) => (
                   <div key={entry.ver} style={{ marginBottom: 12, paddingBottom: 12, borderBottom: "1px solid #2a1a10" }}>
                     <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 6 }}>
@@ -705,6 +720,27 @@ interface PanelStatus {
   monster_name: string | null;
   quest_elapsed_ms: number | null;
   quest_name: string | null;
+}
+
+
+type GitHubReleaseAsset = {
+  name: string;
+  browser_download_url: string;
+};
+
+function findUpdateAsset(data: unknown, latestTag: string): GitHubReleaseAsset | null {
+  const assets = (data as { assets?: GitHubReleaseAsset[] }).assets ?? [];
+  const normalized = latestTag.replace(/^v/i, "");
+  const expectedNames = [
+    `MHW-Radar-${latestTag}.zip`,
+    `MHW-Radar-v${normalized}.zip`,
+  ];
+
+  return (
+    assets.find((asset) => expectedNames.includes(asset.name)) ??
+    assets.find((asset) => /^MHW-Radar-v?\d+\.\d+\.\d+\.zip$/i.test(asset.name)) ??
+    null
+  );
 }
 
 function compareVersions(tag: string, local: string): number {
