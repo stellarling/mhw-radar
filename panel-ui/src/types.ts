@@ -25,6 +25,8 @@ export interface LogEntry {
   timestamp: string;
   level: string;
   message: string;
+  monster_id?: number;
+  action_id?: number;
 }
 
 export interface LogResponse {

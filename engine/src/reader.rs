@@ -560,17 +560,17 @@ impl DataReader {
                         let pct = hp.current / hp.max * 100.0;
                         let action_name =
                             data.action_name.or(data.action_name_en.as_deref()).unwrap_or("未知");
-                        self.logger.info(format!(
+                        self.logger.action_change(format!(
                             "[{}] 怪物动作变更! 距离:{:.0} 角度:{:.1}° 血量:{:.0} ({:.1}%) 动作ID:{} ({})",
                             elapsed_str, log_dist, log_angle, hp.current, pct, action_id, action_name
-                        ));
+                        ), monster_id, action_id);
                     } else {
                         let action_name =
                             data.action_name.or(data.action_name_en.as_deref()).unwrap_or("未知");
-                        self.logger.info(format!(
+                        self.logger.action_change(format!(
                             "[{}] 怪物动作变更! 距离:{:.0} 角度:{:.1}° 动作ID:{} ({})",
                             elapsed_str, log_dist, log_angle, action_id, action_name
-                        ));
+                        ), monster_id, action_id);
                     }
                 }
                 self.last_action_id = action_id;

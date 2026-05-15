@@ -89,6 +89,8 @@ pub struct LogEntry {
     #[allow(dead_code)]
     pub quest_id: Option<i32>,
     pub message: String,
+    pub monster_id: Option<i32>,
+    pub action_id: Option<i32>,
 }
 
 impl LogEntry {
@@ -106,6 +108,8 @@ impl LogEntry {
             level,
             quest_id,
             message,
+            monster_id: None,
+            action_id: None,
         }
     }
 }
@@ -204,6 +208,16 @@ impl Logger {
 
     pub fn quest(&self, msg: impl Into<String>) {
         self.push(LogLevel::Quest, None, msg.into());
+    }
+
+    /// 记录带有怪物 ID 和动作 ID 的日志（用于前端高亮匹配）
+    pub fn action_change(&self, msg: impl Into<String>, monster_id: i32, action_id: i32) {
+        let mut entry = LogEntry::new(LogLevel::Info, None, msg.into());
+        entry.monster_id = Some(monster_id);
+        entry.action_id = Some(action_id);
+        if let Ok(mut storage) = self.storage.lock() {
+            storage.push(entry);
+        }
     }
 
     pub fn push(&self, level: LogLevel, quest_id: Option<i32>, msg: String) {

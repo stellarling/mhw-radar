@@ -1,6 +1,6 @@
 import { forwardRef, useState, useRef, useCallback, useEffect } from "react";
 import type { LogEntry } from "../types";
-import { LOG_COLORS, btnStyle } from "../constants";
+import { LOG_COLORS, HIGHLIGHT_RULES, btnStyle } from "../constants";
 
 const arrowBtnStyle: React.CSSProperties = {
   width: 22,
@@ -159,12 +159,21 @@ export const LogSection = forwardRef<HTMLDivElement, {
             等待游戏数据...
           </div>
         ) : (
-          entries.map((entry, i) => (
-            <div key={i} style={{ color: LOG_COLORS[entry.level] ?? "#dcdcdc" }}>
-              <span style={{ color: "#8c8c8c" }}>{entry.timestamp}</span>{" "}
-              <span>{entry.message}</span>
-            </div>
-          ))
+          entries.map((entry, i) => {
+            const highlight = HIGHLIGHT_RULES.find((r) => r.match(entry));
+            const baseColor = LOG_COLORS[entry.level] ?? "#dcdcdc";
+            return (
+              <div key={i} style={{
+                backgroundColor: highlight?.style.backgroundColor ?? "transparent",
+                color: highlight?.style.color ?? baseColor,
+                paddingLeft: 4,
+                borderRadius: 2,
+              }}>
+                <span style={{ color: "#8c8c8c" }}>{entry.timestamp}</span>{" "}
+                <span>{entry.message}</span>
+              </div>
+            );
+          })
         )}
         <div ref={logEndRef} />
       </div>
