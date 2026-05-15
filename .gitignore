@@ -1,0 +1,10 @@
+/engine/target
+/references
+/releases
+/tools/
+.claude/
+
+# 构建产物
+/dist
+*.log
+node_modules/

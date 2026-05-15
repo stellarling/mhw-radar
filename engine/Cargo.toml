@@ -1,0 +1,23 @@
+[package]
+name = "mhw-radar"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "mhw-radar"
+path = "src/main.rs"
+
+[dependencies]
+# 悬浮窗 UI 框架
+eframe = "0.27"
+egui = "0.27"
+# 进程查找与内存读取
+sysinfo = "0.30"
+process-memory = "0.4"
+winapi = { version = "0.3.9", features = ["psapi", "winnt", "handleapi", "processthreadsapi", "minwindef", "winuser", "windef", "libloaderapi", "timeapi"] }
+# JSON 数据解析（编译时嵌入，无运行时 I/O）
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[build-dependencies]
+embed-resource = "2"

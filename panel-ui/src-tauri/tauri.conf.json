@@ -1,0 +1,39 @@
+{
+  "productName": "MHW Radar",
+  "version": "0.1.0",
+  "identifier": "com.mhw-radar.panel",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "cargo build --release --manifest-path ../engine/Cargo.toml && npm run dev",
+    "beforeBuildCommand": "cargo build --release --manifest-path ../engine/Cargo.toml && npm run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "MHW Radar 面板",
+        "width": 1080,
+        "height": 600,
+        "resizable": true,
+        "center": true,
+        "decorations": false,
+        "transparent": true,
+        "backgroundColor": "#00000000",
+        "shadow": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": false,
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  }
+}
