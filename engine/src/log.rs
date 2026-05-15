@@ -1,14 +1,16 @@
-//! 结构化日志系统 + 任务状态机
+//! 结构化日志系统 + 任务状态机 + 分轮次存储
 //!
-//! 提供线程安全的日志记录，支持按任务分组、
+//! 提供线程安全的日志记录，支持按任务轮次分组、
 //! 自动检测任务生命周期（开始/结束），并记录战斗事件。
-//! 日志存储在内存环形缓冲区中，供 UI 面板读取显示。
+//! 日志以轮次（round）为单位存储，最多保留 100 轮，每轮最多 2000 条。
 
 use std::collections::VecDeque;
 
 use serde::{Deserialize, Serialize};
 
-/// 最大保留日志条数
+/// 最大保留轮次数
+pub const MAX_ROUNDS: usize = 100;
+/// 每轮最大日志条数
 pub const MAX_LOG_ENTRIES: usize = 2000;
 
 /// 任务状态（来自游戏内存 offset 0x54）
@@ -108,28 +110,58 @@ impl LogEntry {
     }
 }
 
-/// 日志存储（Mutex 内部数据）
+/// 日志存储（Mutex 内部数据），按轮次组织
 #[derive(Clone)]
 pub struct LogStorage {
-    pub entries: VecDeque<LogEntry>,
+    /// 每轮一个 VecDeque，尾部为最新轮次
+    pub rounds: VecDeque<VecDeque<LogEntry>>,
 }
 
 impl LogStorage {
     pub fn new() -> Self {
-        Self {
-            entries: VecDeque::with_capacity(MAX_LOG_ENTRIES),
-        }
+        let mut rounds = VecDeque::new();
+        rounds.push_back(VecDeque::with_capacity(MAX_LOG_ENTRIES));
+        Self { rounds }
     }
 
+    /// 开始新一轮次（任务开始时调用）。返回轮次索引（0-based）。
+    pub fn new_round(&mut self) -> usize {
+        if self.rounds.len() >= MAX_ROUNDS {
+            self.rounds.pop_front();
+        }
+        self.rounds.push_back(VecDeque::with_capacity(MAX_LOG_ENTRIES));
+        self.rounds.len() - 1
+    }
+
+    /// 向当前（最新）轮次追加日志
     pub fn push(&mut self, entry: LogEntry) {
-        if self.entries.len() >= MAX_LOG_ENTRIES {
-            self.entries.pop_front();
+        if let Some(current) = self.rounds.back_mut() {
+            if current.len() >= MAX_LOG_ENTRIES {
+                current.pop_front();
+            }
+            current.push_back(entry);
         }
-        self.entries.push_back(entry);
     }
 
+    /// 获取指定轮次的日志，越界返回 None
+    pub fn get_round(&self, index: usize) -> Option<&VecDeque<LogEntry>> {
+        self.rounds.get(index)
+    }
+
+    /// 当前总轮次数
+    pub fn round_count(&self) -> usize {
+        self.rounds.len()
+    }
+
+    /// 清空所有日志，重置为 1 个空轮次
     pub fn clear(&mut self) {
-        self.entries.clear();
+        self.rounds.clear();
+        self.rounds.push_back(VecDeque::with_capacity(MAX_LOG_ENTRIES));
+    }
+
+    /// 合并所有轮次的日志（用于"导出全部"）
+    pub fn all_entries(&self) -> Vec<LogEntry> {
+        self.rounds.iter().flatten().cloned().collect()
     }
 }
 
@@ -145,6 +177,11 @@ impl Logger {
             storage: storage.clone(),
         };
         (handle, storage)
+    }
+
+    /// 开始新一轮次（任务开始时调用）
+    pub fn new_round(&self) -> usize {
+        self.storage.lock().map(|mut s| s.new_round()).unwrap_or(0)
     }
 
     pub fn info(&self, msg: impl Into<String>) {

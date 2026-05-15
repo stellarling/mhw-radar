@@ -16,7 +16,8 @@ export default function App() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const status = useApi<PanelStatus>("/api/status", 1000);
   const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
-  const [logAfter, setLogAfter] = useState(0);
+  const [currentRound, setCurrentRound] = useState(0);
+  const [totalRounds, setTotalRounds] = useState(0);
   const logEndRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
 
@@ -62,21 +63,18 @@ export default function App() {
     return () => clearInterval(id);
   }, []);
 
-  // ── 增量日志 ──
+  // ── 轮次日志轮询 ──
   const fetchLogs = useCallback(async () => {
     try {
-      const res = await fetch(`${API}/api/logs?after=${logAfter}`);
+      const res = await fetch(`${API}/api/logs?round=${currentRound}`);
       const data: LogResponse = await res.json();
 
-      if (data.entries.length > 0) {
-        setLogEntries((prev) => [...prev, ...data.entries]);
-      }
-
-      setLogAfter(data.total);
+      setLogEntries(data.entries);
+      setTotalRounds(data.total_rounds);
     } catch {
       /* ignore */
     }
-  }, [logAfter]);
+  }, [currentRound]);
 
   useEffect(() => {
     fetchLogs();
@@ -85,12 +83,16 @@ export default function App() {
     return () => clearInterval(id);
   }, [fetchLogs]);
 
+  // 自动滚动时跟随最新轮次
+  useEffect(() => {
+    if (autoScroll && totalRounds > 0) {
+      setCurrentRound(totalRounds - 1);
+    }
+  }, [autoScroll, totalRounds]);
+
   useEffect(() => {
     if (!autoScroll || logEntries.length === 0 || !logEndRef.current) return;
 
-    // 不再使用 scrollIntoView。
-    // scrollIntoView 会滚动所有必要的祖先容器，可能把右侧主面板也带到“狩猎日志”区域。
-    // 这里只滚动日志框自身。
     const logContainer = logEndRef.current.parentElement as HTMLDivElement | null;
 
     if (logContainer) {
@@ -276,7 +278,8 @@ export default function App() {
   // ── 日志操作 ──
   const clearLogs = async () => {
     setLogEntries([]);
-    setLogAfter(0);
+    setCurrentRound(0);
+    setTotalRounds(1);
 
     try {
       await fetch(`${API}/api/logs/clear`, { method: "POST" });
@@ -285,25 +288,16 @@ export default function App() {
     }
   };
 
-  const exportLogs = async () => {
-    if (logEntries.length === 0) return;
-
-    const text = logEntries
-      .map((e) => `[${e.timestamp}] [${e.level}] ${e.message}`)
-      .join("\n");
-
+  const saveLogFile = useCallback(async (text: string) => {
     let defaultPath = `mhw-radar-${new Date().toISOString().slice(0, 10)}.txt`;
 
     try {
       const res = await fetch(`${API}/api/desktop-path`);
       const data = await res.json();
-
       if (data.path) {
         defaultPath = `${data.path}\\${defaultPath}`;
       }
-    } catch {
-      /* ignore */
-    }
+    } catch { /* ignore */ }
 
     const filePath = await save({
       defaultPath,
@@ -317,7 +311,27 @@ export default function App() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ path: filePath, content: text }),
     });
-  };
+  }, []);
+
+  const exportCurrentPage = useCallback(() => {
+    if (logEntries.length === 0) return;
+    const text = logEntries
+      .map((e) => `[${e.timestamp}] [${e.level}] ${e.message}`)
+      .join("\n");
+    saveLogFile(text);
+  }, [logEntries, saveLogFile]);
+
+  const exportAllRounds = useCallback(async () => {
+    try {
+      const res = await fetch(`${API}/api/logs`);
+      const data: LogResponse = await res.json();
+      if (data.entries.length === 0) return;
+      const text = data.entries
+        .map((e) => `[${e.timestamp}] [${e.level}] ${e.message}`)
+        .join("\n");
+      saveLogFile(text);
+    } catch { /* ignore */ }
+  }, [saveLogFile]);
 
   // ── Render ──
   return (
@@ -381,11 +395,14 @@ export default function App() {
               <LogSection
                 ref={logEndRef}
                 entries={logEntries}
-                total={logAfter}
+                totalRounds={totalRounds}
+                currentRound={currentRound}
                 autoScroll={autoScroll}
                 onAutoScrollChange={setAutoScroll}
+                onPageChange={setCurrentRound}
                 onClear={clearLogs}
-                onExport={exportLogs}
+                onExportCurrent={exportCurrentPage}
+                onExportAll={exportAllRounds}
               />
             </div>
 

@@ -29,7 +29,8 @@ export interface LogEntry {
 
 export interface LogResponse {
   entries: LogEntry[];
-  total: number;
+  round: number;
+  total_rounds: number;
 }
 
 export type BoolKey =

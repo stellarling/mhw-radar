@@ -163,13 +163,26 @@ fn route(
         }
 
         ("GET", "/api/logs") => {
-            let after: usize = query_param(&req.query, "after")
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(0);
+            let round: Option<usize> = query_param(&req.query, "round")
+                .and_then(|v| v.parse().ok());
             let store = logs.lock().ok()?;
-            let entries: Vec<_> = store.entries.iter().skip(after).cloned().collect();
-            let resp = serde_json::json!({ "entries": entries, "total": store.entries.len() });
+            let total_rounds = store.round_count();
+            let resp = if let Some(r) = round {
+                let entries: Vec<_> = store.get_round(r).cloned()
+                    .map(|v| v.iter().cloned().collect())
+                    .unwrap_or_default();
+                serde_json::json!({ "entries": entries, "round": r, "total_rounds": total_rounds })
+            } else {
+                // 无条件返回全部（用于导出全部）
+                let entries = store.all_entries();
+                serde_json::json!({ "entries": entries, "round": 0, "total_rounds": total_rounds })
+            };
             Some((200, serde_json::to_string(&resp).unwrap()))
+        }
+
+        ("GET", "/api/logs/round-count") => {
+            let store = logs.lock().ok()?;
+            Some((200, serde_json::json!({ "total_rounds": store.round_count() }).to_string()))
         }
 
         ("GET", "/api/status") => {

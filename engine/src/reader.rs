@@ -312,6 +312,10 @@ impl DataReader {
                 if !was_in_quest && in_quest {
                     self.quest_counter += 1;
                     let quest_name = self.quest_names.get(&quest_id).copied().unwrap_or("未知");
+                    // 第1轮任务与初始化日志共享同一页，之后每轮新开一页
+                    if self.quest_counter > 1 {
+                        self.logger.new_round();
+                    }
                     self.logger.separator();
                     self.logger.quest(format!(
                         "[{}] 任务开始(ID:{})，本轮第{}次任务",
