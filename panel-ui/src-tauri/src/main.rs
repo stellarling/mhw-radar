@@ -197,6 +197,7 @@ fn main() {
 
     let run_result = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![
             kill_engine,
             get_version,

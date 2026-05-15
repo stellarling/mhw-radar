@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef, useLayoutEffect } from "react
 import { save } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-shell";
 import { API, GITHUB_API_LATEST, btnStyle } from "./constants";
 import { useApi } from "./api";
 import { Sidebar } from "./components/Sidebar";
@@ -568,22 +569,47 @@ export default function App() {
                   }}
                 >
                   <div style={{ color: "#bfa76b", fontSize: 14, marginBottom: 6 }}>自动更新</div>
-                  <div style={{ color: "#b0b0b0", fontSize: 12 }}>
-                    已是最新
+                  <div style={{ color: updateStatus === "available" ? "#bfa76b" : "#b0b0b0", fontSize: 12 }}>
+                    {updateStatus === "available"
+                      ? `发现新版本 ${updateInfo?.tag ?? ""}`
+                      : updateStatus === "downloading"
+                        ? "正在下载更新..."
+                        : updateStatus === "error"
+                          ? `更新失败${updateError ? `: ${updateError}` : ""}`
+                          : "已是最新"}
                   </div>
-                  <div
-                    style={{
-                      display: "inline-block",
-                      marginTop: 8,
-                      padding: "2px 8px",
-                      borderRadius: 3,
-                      fontSize: 11,
-                      color: "#8c8c8c",
-                      border: "1px solid #555",
-                    }}
-                  >
-                    已是最新
-                  </div>
+                  {updateStatus === "available" && updateInfo && (
+                    <div
+                      style={{
+                        display: "inline-block",
+                        marginTop: 8,
+                        padding: "2px 8px",
+                        borderRadius: 3,
+                        fontSize: 11,
+                        color: "#bfa76b",
+                        border: "1px solid #bfa76b",
+                        cursor: "pointer",
+                      }}
+                      onClick={handleUpdate}
+                    >
+                      立即更新
+                    </div>
+                  )}
+                  {updateStatus !== "available" && (
+                    <div
+                      style={{
+                        display: "inline-block",
+                        marginTop: 8,
+                        padding: "2px 8px",
+                        borderRadius: 3,
+                        fontSize: 11,
+                        color: "#8c8c8c",
+                        border: "1px solid #555",
+                      }}
+                    >
+                      {updateStatus === "downloading" ? "下载中" : updateStatus === "error" ? "失败" : "已是最新"}
+                    </div>
+                  )}
                 </div>
 
                 <div
@@ -596,7 +622,10 @@ export default function App() {
                   }}
                 >
                   <div style={{ color: "#bfa76b", fontSize: 14, marginBottom: 6 }}>GitHub</div>
-                  <a href="https://github.com/stellarling/mhw-radar" target="_blank" rel="noopener noreferrer" style={{ color: "#8ab4f8", fontSize: 12 }}>github.com/stellarling/mhw-radar</a>
+                  <div
+                    onClick={() => open("https://github.com/stellarling/mhw-radar")}
+                    style={{ color: "#8ab4f8", fontSize: 12, cursor: "pointer" }}
+                  >https://github.com/stellarling/mhw-radar</div>
                   <div
                     style={{
                       display: "inline-block",
@@ -608,7 +637,10 @@ export default function App() {
                       border: "1px solid #555",
                     }}
                   >
-                    <a href="https://github.com/stellarling/mhw-radar" target="_blank" rel="noopener noreferrer" style={{ color: "#8ab4f8", fontSize: 11 }}>打开 GitHub</a>
+                    <span
+                      onClick={() => open("https://github.com/stellarling/mhw-radar")}
+                      style={{ color: "#8ab4f8", fontSize: 11, cursor: "pointer" }}
+                    >打开 GitHub</span>
                   </div>
                 </div>
               </div>
