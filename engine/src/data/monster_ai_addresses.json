@@ -1,0 +1,8 @@
+{
+  "101": {
+    "base_offset": 83967056,
+    "pointer_offsets": [3672, 4104, 0],
+    "dist_field_offset": 1532,
+    "angle_field_offset": 1540
+  }
+}

@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 use process_memory::{ProcessHandle, TryIntoProcessHandle};
 use sysinfo::System;
 
-use crate::game_data::{load_monster_names, load_quest_names, lookup_action_name};
+use crate::game_data::{load_monster_ai_configs, load_monster_names, load_quest_names, lookup_action_name};
 use crate::log::{Logger, QuestState};
 use crate::memory::{self, read_ptr_chain};
 use crate::types::{MonsterHp, RadarData};
@@ -130,6 +130,18 @@ struct DataReader {
     last_action_state_ptr: u64,
     cached_action_name_en: Option<(i32, String)>,
     counterattack_scaled: bool,
+    /// 上次实际输出的招式中文名（用于同招分组防抖）
+    last_grouped_name: Option<&'static str>,
+    /// 上次输出招式的时间（用于同招分组防抖）
+    last_grouped_time: Instant,
+    /// 各怪物AI决策值的地址配置
+    monster_ai_configs: HashMap<i32, crate::game_data::MonsterAiConfig>,
+    /// 上次记录的AI决策距离（用于AI模式的新动作检测）
+    last_logged_ai_dist: Option<f32>,
+    /// 上次记录的AI决策角度
+    last_logged_ai_angle: Option<f32>,
+    /// 上次记录的招式中文名（AI模式下按名称变化兜底检测）
+    last_logged_ai_name: Option<&'static str>,
     monster_names: HashMap<i32, &'static str>,
     quest_names: HashMap<i32, &'static str>,
     logger: Logger,
@@ -161,6 +173,12 @@ impl DataReader {
             last_action_state_ptr: 0,
             cached_action_name_en: None,
             counterattack_scaled: false,
+            last_grouped_name: None,
+            last_grouped_time: now - Duration::from_secs(10),
+            monster_ai_configs: load_monster_ai_configs(),
+            last_logged_ai_dist: None,
+            last_logged_ai_angle: None,
+            last_logged_ai_name: None,
             monster_names,
             quest_names,
             logger,
@@ -221,6 +239,11 @@ impl DataReader {
                     self.last_action_state_ptr = 0;
                     self.cached_action_name_en = None;
                     self.counterattack_scaled = false;
+                    self.last_grouped_name = None;
+                    self.last_grouped_time = now - Duration::from_secs(10);
+                    self.last_logged_ai_dist = None;
+                    self.last_logged_ai_angle = None;
+                    self.last_logged_ai_name = None;
                     self.quest_elapsed_frozen = None;
                     self.flash_until = now - Duration::from_secs(1);
                     self.last_action_change = now - Duration::from_secs(1);
@@ -380,6 +403,20 @@ impl DataReader {
                 let dir = if dir < 0.0 { dir + 360.0 } else { dir };
                 data.angle = (dir - monster_yaw + 360.0) % 360.0;
 
+                // ── 怪物AI决策值读取（地址配置自 monster_ai_addresses.json）──
+                let ai_config = self.monster_ai_configs.get(&monster_id);
+                let ai_decision = ai_config.and_then(|config| {
+                    memory::resolve_pointer(handle, self.game_base + config.base_offset, &config.pointer_offsets)
+                        .and_then(|addr| {
+                            Some((
+                                memory::read_memory::<f32>(handle, addr + config.dist_field_offset)?,
+                                memory::read_memory::<f32>(handle, addr + config.angle_field_offset)?,
+                            ))
+                        })
+                });
+                data.ai_dist = ai_decision.map(|(d, _)| d);
+                data.ai_angle = ai_decision.map(|(_, a)| a);
+
                 // 怪物血量
                 if let Some(addr) = monster_addr {
                     if let Some(hp_ptr) = memory::read_memory::<u64>(handle, addr + 0x7670) {
@@ -438,28 +475,73 @@ impl DataReader {
                         });
                 }
 
-                let frame_reset =
-                    memory::read_memory::<u64>(handle, addr + ACTION_STATE_OFFSET)
-                        .and_then(|ptr| {
-                            let frame =
-                                memory::read_memory::<f32>(handle, ptr + ACTION_CURRENT_FRAME)?;
-                            Some((ptr, frame))
+                // ── 动作变化检测 ──
+                let (is_new_action, log_dist, log_angle) = if ai_config.is_some() {
+                    // AI 模式：
+                    //   AI值变了 → 新动作（用AI距离/角度）
+                    //   AI值没变但中文招式名变了 → 新动作（用计算值，因为AI值没更新）
+                    ai_decision
+                        .map(|(d, a)| {
+                            let ai_changed = self.last_logged_ai_dist.map_or(true, |ld| d != ld)
+                                || self.last_logged_ai_angle.map_or(true, |la| a != la);
+                            if ai_changed {
+                                self.last_logged_ai_dist = Some(d);
+                                self.last_logged_ai_angle = Some(a);
+                                self.last_logged_ai_name = data.action_name;
+                                (true, d, a)
+                            } else {
+                                let name_changed = data.action_name.is_some()
+                                    && data.action_name != self.last_logged_ai_name;
+                                if name_changed {
+                                    self.last_logged_ai_name = data.action_name;
+                                    (true, data.dist_h, data.angle)
+                                } else {
+                                    (false, 0.0, 0.0)
+                                }
+                            }
                         })
-                        .map(|(ptr, frame)| {
-                            let ptr_unchanged = self.last_action_state_ptr == ptr
-                                || self.last_action_state_ptr == 0;
-                            self.last_action_state_ptr = ptr;
-                            let reset =
-                                self.action_id_init && self.last_frame > 1.0 && frame < 0.5;
-                            self.last_frame = frame;
-                            reset && ptr_unchanged
-                        })
-                        .unwrap_or(false);
+                        .unwrap_or((false, 0.0, 0.0))
+                } else {
+                    // 传统模式：ID变化 + 帧复位 + 防抖
+                    let frame_reset =
+                        memory::read_memory::<u64>(handle, addr + ACTION_STATE_OFFSET)
+                            .and_then(|ptr| {
+                                let frame =
+                                    memory::read_memory::<f32>(handle, ptr + ACTION_CURRENT_FRAME)?;
+                                Some((ptr, frame))
+                            })
+                            .map(|(ptr, frame)| {
+                                let ptr_unchanged = self.last_action_state_ptr == ptr
+                                    || self.last_action_state_ptr == 0;
+                                self.last_action_state_ptr = ptr;
+                                let reset =
+                                    self.action_id_init && self.last_frame > 1.0 && frame < 0.5;
+                                self.last_frame = frame;
+                                reset && ptr_unchanged
+                            })
+                            .unwrap_or(false);
 
-                let id_changed = self.action_id_init && action_id != self.last_action_id;
-                let debounced = !id_changed
-                    && self.last_action_change.elapsed() < Duration::from_millis(1700);
-                let is_new_action = (id_changed || frame_reset) && !debounced;
+                    let id_changed = self.action_id_init && action_id != self.last_action_id;
+                    let debounced = !id_changed
+                        && self.last_action_change.elapsed() < Duration::from_millis(1700);
+                    let mut candidate = (id_changed || frame_reset) && !debounced;
+
+                    // 同中文名分组防抖（仅传统模式）
+                    if candidate {
+                        let current_name = data.action_name;
+                        let same_name_group = current_name.is_some()
+                            && current_name == self.last_grouped_name
+                            && self.last_grouped_time.elapsed() < Duration::from_millis(1200);
+                        if same_name_group {
+                            self.last_grouped_time = Instant::now();
+                            candidate = false;
+                        } else {
+                            self.last_grouped_name = current_name;
+                            self.last_grouped_time = Instant::now();
+                        }
+                    }
+                    (candidate, data.dist_h, data.angle)
+                };
 
                 if is_new_action {
                     self.last_action_change = Instant::now();
@@ -476,14 +558,14 @@ impl DataReader {
                             data.action_name.or(data.action_name_en.as_deref()).unwrap_or("未知");
                         self.logger.info(format!(
                             "[{}] 怪物动作变更! 距离:{:.0} 角度:{:.1}° 血量:{:.0} ({:.1}%) 动作ID:{} ({})",
-                            elapsed_str, data.dist_h, data.angle, hp.current, pct, action_id, action_name
+                            elapsed_str, log_dist, log_angle, hp.current, pct, action_id, action_name
                         ));
                     } else {
                         let action_name =
                             data.action_name.or(data.action_name_en.as_deref()).unwrap_or("未知");
                         self.logger.info(format!(
                             "[{}] 怪物动作变更! 距离:{:.0} 角度:{:.1}° 动作ID:{} ({})",
-                            elapsed_str, data.dist_h, data.angle, action_id, action_name
+                            elapsed_str, log_dist, log_angle, action_id, action_name
                         ));
                     }
                 }

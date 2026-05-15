@@ -71,3 +71,18 @@ pub fn load_quest_names() -> HashMap<i32, &'static str> {
         })
         .collect()
 }
+
+// ── 怪物AI地址配置 ──────────────────────────────────────────
+
+#[derive(serde::Deserialize, Clone)]
+pub struct MonsterAiConfig {
+    pub base_offset: u64,
+    pub pointer_offsets: Vec<u64>,
+    pub dist_field_offset: u64,
+    pub angle_field_offset: u64,
+}
+
+pub fn load_monster_ai_configs() -> HashMap<i32, MonsterAiConfig> {
+    serde_json::from_str(include_str!("data/monster_ai_addresses.json"))
+        .expect("invalid monster_ai_addresses.json")
+}
