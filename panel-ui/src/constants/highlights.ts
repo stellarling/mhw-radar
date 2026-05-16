@@ -20,4 +20,14 @@ export const HIGHLIGHT_RULES: HighlightRule[] = [
     match: (e) => e.monster_id === 101 && (e.action_id === 241 || e.action_id === 242),
     style: { backgroundColor: "rgba(76, 175, 80, 0.25)", color: "#8bc34a" },
   },
+  {
+    label: "激昂金狮子破头倒地",
+    match: (e) => e.monster_id === 92 && e.action_id === 198,
+    style: { backgroundColor: "rgba(76, 175, 80, 0.25)", color: "#8bc34a" },
+  },
+  {
+    label: "激昂金狮子进/退红手",
+    match: (e) => e.monster_id === 92 && (e.action_id === 197 || e.action_id === 96),
+    style: { backgroundColor: "rgba(255, 179, 0, 0.25)", color: "#ffb300" },
+  },
 ];
