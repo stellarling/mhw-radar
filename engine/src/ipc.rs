@@ -5,11 +5,15 @@
 
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
 use crate::log::LogStorage;
 use crate::types::{PanelStatus, RadarData, Settings};
+
+/// 单次 HTTP 请求体上限。
+const MAX_REQUEST_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 /// 启动 HTTP API 服务器（在后台线程运行）
 pub fn start_server(
@@ -57,9 +61,10 @@ fn parse_request(raw: &str) -> Option<Request> {
         None => (full_path.to_string(), String::new()),
     };
 
+    // 不 trim body。导出日志时尾部换行属于用户内容，不能在 IPC 层隐式修改。
     let body = raw
         .split_once("\r\n\r\n")
-        .map(|(_, b)| b.trim().to_string())
+        .map(|(_, b)| b.to_string())
         .unwrap_or_default();
 
     Some(Request {
@@ -80,6 +85,21 @@ fn query_param<'a>(query: &'a str, name: &str) -> Option<&'a str> {
     None
 }
 
+fn find_header_end(buf: &[u8]) -> Option<usize> {
+    buf.windows(4).position(|w| w == b"\r\n\r\n").map(|i| i + 4)
+}
+
+fn extract_content_length(header: &str) -> Option<usize> {
+    header
+        .lines()
+        .find(|l| l.to_ascii_lowercase().starts_with("content-length:"))
+        .and_then(|l| l.split_once(':')?.1.trim().parse::<usize>().ok())
+}
+
+fn json_error(message: impl AsRef<str>) -> String {
+    serde_json::json!({ "ok": false, "error": message.as_ref() }).to_string()
+}
+
 // ── 路由 ────────────────────────────────────────────────────────
 
 fn handle(
@@ -88,42 +108,62 @@ fn handle(
     logs: &Arc<Mutex<LogStorage>>,
     radar_data: &Arc<Mutex<RadarData>>,
 ) {
-    // 先读头部（4KB 足够）
     let mut buf = vec![0u8; 4096];
     let n = match stream.read(&mut buf) {
         Ok(0) | Err(_) => return,
         Ok(n) => n,
     };
+    buf.truncate(n);
 
-    // 解析 Content-Length，按需读取完整请求体
-    let raw_str = String::from_utf8_lossy(&buf[..n]);
-    let content_len = raw_str
-        .lines()
-        .find(|l| l.to_lowercase().starts_with("content-length:"))
-        .and_then(|l| l.split(':').nth(1)?.trim().parse::<usize>().ok());
+    let header_end = match find_header_end(&buf) {
+        Some(pos) => pos,
+        None => return send_cors(&mut stream, 400, &json_error("Bad Request")),
+    };
 
-    let raw: String = if let Some(len) = content_len {
-        let header_end = raw_str.find("\r\n\r\n").map(|i| i + 4).unwrap_or(n);
-        let total_needed = header_end + len;
-        if total_needed > buf.len() {
-            buf.resize(total_needed.min(524_288), 0); // 上限 512KB
-        }
+    let header = String::from_utf8_lossy(&buf[..header_end]);
+    let content_len = extract_content_length(&header).unwrap_or(0);
+
+    if content_len > MAX_REQUEST_BODY_BYTES {
+        return send_cors(
+            &mut stream,
+            413,
+            &json_error(format!(
+                "request body too large: {} bytes, max {} bytes",
+                content_len, MAX_REQUEST_BODY_BYTES
+            )),
+        );
+    }
+
+    let total_needed = header_end + content_len;
+    if buf.len() < total_needed {
+        buf.resize(total_needed, 0);
         let mut total = n;
-        while total < total_needed.min(buf.len()) {
-            match stream.read(&mut buf[total..]) {
+        while total < total_needed {
+            match stream.read(&mut buf[total..total_needed]) {
                 Ok(0) => break,
                 Ok(r) => total += r,
                 Err(_) => break,
             }
         }
-        String::from_utf8_lossy(&buf[..total]).to_string()
-    } else {
-        raw_str.to_string()
-    };
+        buf.truncate(total);
+    }
 
+    if buf.len() < total_needed {
+        return send_cors(
+            &mut stream,
+            400,
+            &json_error(format!(
+                "incomplete request body: received {} bytes, expected {} bytes",
+                buf.len().saturating_sub(header_end),
+                content_len
+            )),
+        );
+    }
+
+    let raw = String::from_utf8_lossy(&buf).to_string();
     let req = match parse_request(&raw) {
         Some(r) => r,
-        None => return send_cors(&mut stream, 400, "Bad Request"),
+        None => return send_cors(&mut stream, 400, &json_error("Bad Request")),
     };
 
     if req.method == "OPTIONS" {
@@ -138,7 +178,7 @@ fn handle(
 
     match route(&req, settings, logs, radar_data) {
         Some((status, body)) => send_cors(&mut stream, status, &body),
-        None => send_cors(&mut stream, 404, r#"{"error":"Not Found"}"#),
+        None => send_cors(&mut stream, 404, &json_error("Not Found")),
     }
 }
 
@@ -155,9 +195,14 @@ fn route(
         }
 
         ("PUT", "/api/settings") => {
-            let new: Settings = serde_json::from_str(&req.body).ok()?;
+            let new: Settings = match serde_json::from_str(&req.body) {
+                Ok(v) => v,
+                Err(e) => return Some((400, json_error(format!("invalid settings JSON: {}", e)))),
+            };
             if let Ok(mut s) = settings.lock() {
                 *s = new;
+            } else {
+                return Some((500, json_error("failed to lock settings")));
             }
             Some((204, String::new()))
         }
@@ -209,17 +254,63 @@ fn route(
         ("POST", "/api/logs/clear") => {
             if let Ok(mut store) = logs.lock() {
                 store.clear();
+                Some((204, String::new()))
+            } else {
+                Some((500, json_error("failed to lock log storage")))
             }
-            Some((204, String::new()))
         }
 
         ("POST", "/api/logs/export") => {
             #[derive(serde::Deserialize)]
-            struct ExportReq { path: String, content: String }
-            if let Ok(req) = serde_json::from_str::<ExportReq>(&req.body) {
-                let _ = std::fs::write(&req.path, &req.content);
+            struct ExportReq {
+                path: String,
+                content: String,
             }
-            Some((204, String::new()))
+
+            let export_req = match serde_json::from_str::<ExportReq>(&req.body) {
+                Ok(v) => v,
+                Err(e) => {
+                    return Some((
+                        400,
+                        json_error(format!("invalid export JSON: {}", e)),
+                    ))
+                }
+            };
+
+            if export_req.path.trim().is_empty() {
+                return Some((400, json_error("export path is empty")));
+            }
+
+            let path = PathBuf::from(export_req.path);
+            if let Some(parent) = path.parent() {
+                if !parent.as_os_str().is_empty() {
+                    if let Err(e) = std::fs::create_dir_all(parent) {
+                        return Some((
+                            500,
+                            json_error(format!(
+                                "failed to create export directory '{}': {}",
+                                parent.display(),
+                                e
+                            )),
+                        ));
+                    }
+                }
+            }
+
+            match std::fs::write(&path, export_req.content.as_bytes()) {
+                Ok(_) => Some((
+                    200,
+                    serde_json::json!({
+                        "ok": true,
+                        "path": path.to_string_lossy(),
+                    })
+                    .to_string(),
+                )),
+                Err(e) => Some((
+                    500,
+                    json_error(format!("failed to write export file '{}': {}", path.display(), e)),
+                )),
+            }
         }
 
         _ => None,
@@ -255,19 +346,21 @@ fn send_cors(stream: &mut TcpStream, status: u16, body: &str) {
         204 => "204 No Content",
         400 => "400 Bad Request",
         404 => "404 Not Found",
+        413 => "413 Payload Too Large",
+        500 => "500 Internal Server Error",
         _ => "500 Internal Server Error",
     };
 
     let headers = format!(
         "HTTP/1.1 {}\r\n\
-         Content-Type: application/json\r\n\
+         Content-Type: application/json; charset=utf-8\r\n\
          Content-Length: {}\r\n\
          Access-Control-Allow-Origin: *\r\n\
          Access-Control-Allow-Methods: GET, PUT, POST, OPTIONS\r\n\
          Access-Control-Allow-Headers: Content-Type\r\n\
          \r\n",
         status_text,
-        body.len()
+        body.as_bytes().len()
     );
 
     let _ = (stream.write_all(headers.as_bytes()), stream.flush());

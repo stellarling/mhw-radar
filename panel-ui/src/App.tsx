@@ -372,20 +372,26 @@ export default function App() {
     setTotalRounds(1);
 
     try {
-      await fetch(`${API}/api/logs/clear`, { method: "POST" });
-    } catch {
-      /* ignore */
+      const res = await fetch(`${API}/api/logs/clear`, { method: "POST" });
+      if (!res.ok) {
+        throw new Error(await readApiError(res));
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      window.alert(`清除日志失败：${message}`);
     }
   };
 
-  const saveLogFile = useCallback(async (text: string) => {
-    let defaultPath = `mhw-radar-${new Date().toISOString().slice(0, 10)}.txt`;
+  const saveLogFile = useCallback(async (text: string, defaultName?: string) => {
+    let defaultPath = defaultName ?? `mhw-radar-${new Date().toISOString().slice(0, 10)}.txt`;
 
     try {
       const res = await fetch(`${API}/api/desktop-path`);
-      const data = await res.json();
-      if (data.path) {
-        defaultPath = `${data.path}\\${defaultPath}`;
+      if (res.ok) {
+        const data = await res.json();
+        if (data.path) {
+          defaultPath = `${data.path}\\${defaultPath}`;
+        }
       }
     } catch { /* ignore */ }
 
@@ -396,31 +402,50 @@ export default function App() {
 
     if (!filePath) return;
 
-    await fetch(`${API}/api/logs/export`, {
+    const res = await fetch(`${API}/api/logs/export`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ path: filePath, content: text }),
     });
+
+    if (!res.ok) {
+      throw new Error(await readApiError(res));
+    }
   }, []);
 
-  const exportCurrentPage = useCallback(() => {
+  const exportCurrentPage = useCallback(async () => {
     if (logEntries.length === 0) return;
-    const text = logEntries
-      .map((e) => `[${e.timestamp}] [${e.level}] ${e.message}`)
-      .join("\n");
-    saveLogFile(text);
-  }, [logEntries, saveLogFile]);
+
+    try {
+      const text = logEntries
+        .map((e) => `[${e.timestamp}] [${e.level}] ${e.message}`)
+        .join("\r\n") + "\r\n";
+      const roundLabel = String(currentRound + 1).padStart(3, "0");
+      await saveLogFile(text, `mhw-radar-round-${roundLabel}-${new Date().toISOString().slice(0, 10)}.txt`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      window.alert(`导出本页失败：${message}`);
+    }
+  }, [currentRound, logEntries, saveLogFile]);
 
   const exportAllRounds = useCallback(async () => {
     try {
       const res = await fetch(`${API}/api/logs`);
+      if (!res.ok) {
+        throw new Error(await readApiError(res));
+      }
+
       const data: LogResponse = await res.json();
       if (data.entries.length === 0) return;
+
       const text = data.entries
         .map((e) => `[${e.timestamp}] [${e.level}] ${e.message}`)
-        .join("\n");
-      saveLogFile(text);
-    } catch { /* ignore */ }
+        .join("\r\n") + "\r\n";
+      await saveLogFile(text, `mhw-radar-all-${new Date().toISOString().slice(0, 10)}.txt`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      window.alert(`导出全部失败：${message}`);
+    }
   }, [saveLogFile]);
 
   // ── Render ──
@@ -605,7 +630,7 @@ export default function App() {
                         : updateStatus === "error"
                           ? "#ff8a80"
                           : "#b0b0b0",
-                      fontSize: 12,
+                      fontSize: 14,
                       lineHeight: 1.7,
                     }}
                   >
@@ -618,7 +643,7 @@ export default function App() {
                         style={{
                           ...btnStyle,
                           padding: "2px 8px",
-                          fontSize: 11,
+                          fontSize: 13,
                           color: "#bfa76b",
                           border: "1px solid #bfa76b",
                         }}
@@ -632,7 +657,7 @@ export default function App() {
                       style={{
                         ...btnStyle,
                         padding: "2px 8px",
-                        fontSize: 11,
+                        fontSize: 13,
                         color: "#8c8c8c",
                         border: "1px solid #555",
                         opacity: updateStatus === "checking" || updateStatus === "downloading" ? 0.55 : 1,
@@ -658,7 +683,7 @@ export default function App() {
                   <div style={{ color: "#bfa76b", fontSize: 14, marginBottom: 6 }}>GitHub</div>
                   <div
                     onClick={() => void openExternal(githubUrl)}
-                    style={{ color: "#8ab4f8", fontSize: 12, cursor: "pointer" }}
+                    style={{ color: "#8ab4f8", fontSize: 13, cursor: "pointer" }}
                   >{githubUrl}</div>
                   <div
                     style={{
@@ -666,14 +691,14 @@ export default function App() {
                       marginTop: 8,
                       padding: "2px 8px",
                       borderRadius: 3,
-                      fontSize: 11,
+                      fontSize: 13,
                       color: "#8c8c8c",
                       border: "1px solid #555",
                     }}
                   >
                     <span
                       onClick={() => void openExternal(githubUrl)}
-                      style={{ color: "#8ab4f8", fontSize: 11, cursor: "pointer" }}
+                      style={{ color: "#8ab4f8", fontSize: 13, cursor: "pointer" }}
                     >打开 GitHub</span>
                   </div>
                 </div>
@@ -776,6 +801,28 @@ export default function App() {
       </div>
     </>
   );
+}
+
+async function readApiError(res: Response): Promise<string> {
+  try {
+    const data = await res.json();
+    if (typeof data?.error === "string" && data.error.trim()) {
+      return data.error;
+    }
+  } catch {
+    /* response is not JSON */
+  }
+
+  try {
+    const text = await res.text();
+    if (text.trim()) {
+      return text;
+    }
+  } catch {
+    /* ignore */
+  }
+
+  return `HTTP ${res.status}`;
 }
 
 // ── Local types ──

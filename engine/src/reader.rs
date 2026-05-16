@@ -148,6 +148,7 @@ struct DataReader {
     prev_quest_state: QuestState,
     prev_quest_id: i32,
     quest_counter: i32,
+    quest_start_time: Option<String>,
 }
 
 impl DataReader {
@@ -185,6 +186,7 @@ impl DataReader {
             prev_quest_state: QuestState::None,
             prev_quest_id: 0,
             quest_counter: 0,
+            quest_start_time: None,
         }
     }
 
@@ -311,11 +313,10 @@ impl DataReader {
 
                 if !was_in_quest && in_quest {
                     self.quest_counter += 1;
+                    self.quest_start_time = Some(crate::log::format_datetime_utc8_for_filename());
                     let quest_name = self.quest_names.get(&quest_id).copied().unwrap_or("未知");
-                    // 第1轮任务与初始化日志共享同一页，之后每轮新开一页
-                    if self.quest_counter > 1 {
-                        self.logger.new_round();
-                    }
+                    // 每次任务开始都进入独立轮次，避免第一轮任务混入启动/连接日志。
+                    self.logger.new_round();
                     self.logger.separator();
                     self.logger.quest(format!(
                         "[{}] 任务开始(ID:{})，本轮第{}次任务",
@@ -336,6 +337,13 @@ impl DataReader {
                     ));
                     self.logger.separator();
                     self.logger.info("");
+                    if let Some(ref start) = self.quest_start_time {
+                        match self.logger.save_latest_round(start) {
+                            Ok(path) => self.logger.info(format!("本轮日志已自动保存：{}", path)),
+                            Err(err) => self.logger.error(format!("本轮日志自动保存失败：{}", err)),
+                        }
+                    }
+                    self.quest_start_time = None;
                 }
 
                 if was_in_quest && current_state == QuestState::None {
@@ -346,6 +354,13 @@ impl DataReader {
                     self.logger.quest(format!("任务中断！耗时 {}", elapsed));
                     self.logger.separator();
                     self.logger.info("");
+                    if let Some(ref start) = self.quest_start_time {
+                        match self.logger.save_latest_round(start) {
+                            Ok(path) => self.logger.info(format!("本轮日志已自动保存：{}", path)),
+                            Err(err) => self.logger.error(format!("本轮日志自动保存失败：{}", err)),
+                        }
+                    }
+                    self.quest_start_time = None;
                 }
             }
             self.prev_quest_state = current_state;
@@ -609,3 +624,4 @@ pub fn spawn_data_reader(logger: Logger) -> Arc<Mutex<RadarData>> {
     });
     shared
 }
+
