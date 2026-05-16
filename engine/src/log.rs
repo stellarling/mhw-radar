@@ -5,6 +5,7 @@
 //! 日志以轮次（round）为单位存储，最多保留 100 轮，每轮最多 2000 条。
 
 use std::collections::VecDeque;
+use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
@@ -79,7 +80,6 @@ pub enum LogLevel {
     Combat,
     Quest,
 }
-
 
 /// 获取 UTC+8 当前时间的文件名友好格式：2026-05-16_14-30-25
 pub fn format_datetime_utc8_for_filename() -> String {
@@ -208,6 +208,79 @@ impl LogStorage {
     }
 }
 
+/// 获取日志保存根目录。
+///
+/// 优先级：
+/// 1. Tauri 面板启动 engine 时传入的 MHW_RADAR_APP_DIR；
+/// 2. 当前工作目录中存在 MHW Radar.exe 时，使用当前工作目录；
+/// 3. 如果是开发环境下的 engine/target/release/mhw-radar.exe，向上查找项目根目录；
+/// 4. 回退到当前 engine exe 所在目录。
+fn app_root_dir() -> PathBuf {
+    if let Ok(dir) = std::env::var("MHW_RADAR_APP_DIR") {
+        let path = PathBuf::from(dir);
+        if !path.as_os_str().is_empty() {
+            return path;
+        }
+    }
+
+    if let Ok(current_dir) = std::env::current_dir() {
+        if current_dir.join("MHW Radar.exe").exists() {
+            return current_dir;
+        }
+
+        if looks_like_project_root(&current_dir) {
+            return current_dir;
+        }
+    }
+
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let mut dir = exe_dir.to_path_buf();
+
+            loop {
+                if looks_like_project_root(&dir) {
+                    return dir;
+                }
+
+                if !dir.pop() {
+                    break;
+                }
+            }
+
+            return exe_dir.to_path_buf();
+        }
+    }
+
+    std::env::current_dir().unwrap_or_default()
+}
+
+fn looks_like_project_root(dir: &std::path::Path) -> bool {
+    dir.join("package.json").exists()
+        && dir.join("engine").exists()
+        && dir.join("panel-ui").exists()
+}
+
+/// Windows 文件名安全处理。
+fn sanitize_filename_part(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+
+    for ch in value.chars() {
+        match ch {
+            '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => out.push('_'),
+            c if c.is_control() => out.push('_'),
+            c => out.push(c),
+        }
+    }
+
+    let trimmed = out.trim().trim_matches('.').to_string();
+
+    if trimmed.is_empty() {
+        "untitled".to_string()
+    } else {
+        trimmed
+    }
+}
+
 /// 线程安全的日志句柄
 pub struct Logger {
     storage: std::sync::Arc<std::sync::Mutex<LogStorage>>,
@@ -269,7 +342,8 @@ impl Logger {
         self.push(LogLevel::Info, None, "─".repeat(50));
     }
 
-    /// 将最新一轮日志保存到 exe 所在目录的 logs/ 下，以任务开始时间命名
+    /// 将最新一轮日志保存到应用根目录的 logs/ 下，以任务开始时间命名。
+    ///   <项目根目录>/logs/2026-05-16_14-30-25.txt
     pub fn save_latest_round(&self, start_time: &str) -> std::io::Result<String> {
         let storage = self.storage.lock().map_err(|_| {
             std::io::Error::new(std::io::ErrorKind::Other, "failed to lock log storage")
@@ -280,25 +354,26 @@ impl Logger {
         })?;
 
         if round.is_empty() {
-            return Err(std::io::Error::new(std::io::ErrorKind::NotFound, "round is empty"));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "round is empty",
+            ));
         }
 
-        let mut content: String = round.iter()
+        let mut content: String = round
+            .iter()
             .map(|e| format!("[{}] [{:?}] {}", e.timestamp, e.level, e.message))
             .collect::<Vec<_>>()
             .join("\r\n");
         content.push_str("\r\n");
 
-        let exe_dir = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
-
-        let log_dir = exe_dir.join("logs");
+        let log_dir = app_root_dir().join("logs");
         std::fs::create_dir_all(&log_dir)?;
 
-        let file_path = log_dir.join(format!("{}.txt", start_time));
-        std::fs::write(&file_path, &content)?;
+        let file_name = sanitize_filename_part(start_time);
+        let file_path = log_dir.join(format!("{}.txt", file_name));
+
+        std::fs::write(&file_path, content.as_bytes())?;
 
         Ok(file_path.to_string_lossy().to_string())
     }
@@ -311,4 +386,3 @@ impl Clone for Logger {
         }
     }
 }
-

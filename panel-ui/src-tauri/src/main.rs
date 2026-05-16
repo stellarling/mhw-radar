@@ -21,11 +21,7 @@ static SHUTTING_DOWN: AtomicBool = AtomicBool::new(false);
 fn radar_exe_path() -> std::path::PathBuf {
     // env!("CARGO_MANIFEST_DIR") = panel-ui/src-tauri/
     // 回退两级到项目根目录 → engine/target/release/mhw-radar.exe
-    let dev_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
+    let dev_path = project_root_dir()
         .join("engine")
         .join("target")
         .join("release")
@@ -53,6 +49,32 @@ fn radar_exe_path() -> std::path::PathBuf {
     }
 
     exe_dir.join(RADAR_EXE_NAME)
+}
+
+/// 项目根目录。
+///
+/// 对 Tauri dev/build 均可用，因为 CARGO_MANIFEST_DIR 指向 panel-ui/src-tauri。
+fn project_root_dir() -> std::path::PathBuf {
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .to_path_buf()
+}
+
+/// MHW Radar.exe 所在目录。
+fn app_root_dir() -> std::path::PathBuf {
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+
+    if exe_dir.join("MHW Radar.exe").exists() {
+        return exe_dir;
+    }
+
+    project_root_dir()
 }
 
 fn command_silent(program: &str) -> Command {
@@ -99,6 +121,8 @@ fn spawn_radar() {
         return;
     }
 
+    let app_dir = app_root_dir();
+
     // 避免面板异常退出后，旧的悬浮窗进程继续占着 IPC 端口或 UI 资源。
     kill_radar_by_image_name();
 
@@ -119,7 +143,11 @@ fn spawn_radar() {
     let mut cmd = Command::new(&path);
     cmd.stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        .stderr(Stdio::null())
+        // 关键：让 engine 的当前工作目录指向应用根目录。
+        .current_dir(&app_dir)
+        // 关键：让 engine 保存日志时优先使用 MHW Radar.exe 所在目录。
+        .env("MHW_RADAR_APP_DIR", &app_dir);
 
     #[cfg(windows)]
     {
@@ -134,7 +162,11 @@ fn spawn_radar() {
                 *guard = Some(child);
             }
 
-            eprintln!("[launcher] mhw-radar.exe started, pid={}", pid);
+            eprintln!(
+                "[launcher] mhw-radar.exe started, pid={}, app_dir={}",
+                pid,
+                app_dir.to_string_lossy()
+            );
         }
         Err(e) => {
             eprintln!("[launcher] failed to start mhw-radar.exe: {}", e);
@@ -234,12 +266,7 @@ fn get_version() -> String {
 /// 返回 MHW Radar.exe 所在目录（用于 bat 知道在哪覆盖文件）
 #[tauri::command]
 fn get_app_dir() -> String {
-    std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
-        .to_string_lossy()
-        .to_string()
+    app_root_dir().to_string_lossy().to_string()
 }
 
 /// 返回系统临时目录
