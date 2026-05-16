@@ -98,7 +98,7 @@ impl LogEntry {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default();
-        let total_secs = now.as_secs();
+        let total_secs = now.as_secs() + 8 * 3600; // UTC+8
         let h = (total_secs / 3600) % 24;
         let m = (total_secs / 60) % 60;
         let s = total_secs % 60;
