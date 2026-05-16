@@ -10,17 +10,160 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 #[cfg(windows)]
+use std::ffi::c_void;
+#[cfg(windows)]
 use std::os::windows::process::CommandExt;
 
 use tauri::{Emitter, Window};
 
 const RADAR_EXE_NAME: &str = "mhw-radar.exe";
+const PANEL_EXE_NAME: &str = "MHW Radar.exe";
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
+#[cfg(windows)]
+const ERROR_ALREADY_EXISTS: u32 = 183;
+
+#[cfg(windows)]
+const SW_RESTORE: i32 = 9;
+
+#[cfg(windows)]
+const FLASHW_TRAY: u32 = 0x0000_0002;
+
+#[cfg(windows)]
+const FLASHW_TIMERNOFG: u32 = 0x0000_000C;
+
 static RADAR_PROCESS: Mutex<Option<Child>> = Mutex::new(None);
 static SHUTTING_DOWN: AtomicBool = AtomicBool::new(false);
+
+#[cfg(windows)]
+type Handle = *mut c_void;
+
+#[cfg(windows)]
+#[repr(C)]
+struct FLASHWINFO {
+    cb_size: u32,
+    hwnd: Handle,
+    dw_flags: u32,
+    u_count: u32,
+    dw_timeout: u32,
+}
+
+#[cfg(windows)]
+#[link(name = "kernel32")]
+extern "system" {
+    fn CreateMutexW(
+        lp_mutex_attributes: *mut c_void,
+        b_initial_owner: i32,
+        lp_name: *const u16,
+    ) -> Handle;
+    fn GetLastError() -> u32;
+    fn CloseHandle(h_object: Handle) -> i32;
+}
+
+#[cfg(windows)]
+#[link(name = "user32")]
+extern "system" {
+    fn FindWindowW(lp_class_name: *const u16, lp_window_name: *const u16) -> Handle;
+    fn ShowWindow(h_wnd: Handle, n_cmd_show: i32) -> i32;
+    fn SetForegroundWindow(h_wnd: Handle) -> i32;
+    fn FlashWindowEx(pfwi: *mut FLASHWINFO) -> i32;
+}
+
+#[cfg(windows)]
+struct SingleInstanceGuard {
+    handle: Handle,
+}
+
+#[cfg(windows)]
+impl Drop for SingleInstanceGuard {
+    fn drop(&mut self) {
+        unsafe {
+            if !self.handle.is_null() {
+                let _ = CloseHandle(self.handle);
+            }
+        }
+    }
+}
+
+#[cfg(windows)]
+fn wide_null(value: &str) -> Vec<u16> {
+    value.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+/// 面板单实例保护。
+///
+/// 使用 Local 命名空间：同一 Windows 登录会话内，不允许任意版本 / 任意目录的
+/// MHW Radar 面板同时运行。这里不区分 release/dev，因为 release 包也不需要和 dev
+/// 同时运行。
+#[cfg(windows)]
+fn acquire_single_instance() -> Option<SingleInstanceGuard> {
+    let name = wide_null("Local\\MHW_RADAR_PANEL_SINGLE_INSTANCE");
+
+    let handle = unsafe { CreateMutexW(std::ptr::null_mut(), 1, name.as_ptr()) };
+
+    if handle.is_null() {
+        eprintln!("[single-instance] CreateMutexW failed; aborting second launch defensively");
+        return None;
+    }
+
+    let last_error = unsafe { GetLastError() };
+
+    if last_error == ERROR_ALREADY_EXISTS {
+        unsafe {
+            let _ = CloseHandle(handle);
+        }
+
+        eprintln!("[single-instance] another MHW Radar panel instance is already running");
+        return None;
+    }
+
+    Some(SingleInstanceGuard { handle })
+}
+
+#[cfg(not(windows))]
+struct SingleInstanceGuard;
+
+#[cfg(not(windows))]
+fn acquire_single_instance() -> Option<SingleInstanceGuard> {
+    Some(SingleInstanceGuard)
+}
+
+/// 当检测到已有实例时，唤醒旧面板窗口，然后当前进程退出。
+///
+/// 简单版实现：按窗口标题查找 Tauri 主窗口。当前项目窗口标题应为 "MHW Radar"。
+/// 如果后续 tauri.conf.json 中的窗口标题改名，这里也要同步修改。
+#[cfg(windows)]
+fn activate_existing_panel_window() {
+    let title = wide_null("MHW Radar");
+    let hwnd = unsafe { FindWindowW(std::ptr::null(), title.as_ptr()) };
+
+    if hwnd.is_null() {
+        eprintln!("[single-instance] existing instance found, but panel window was not found");
+        return;
+    }
+
+    unsafe {
+        let _ = ShowWindow(hwnd, SW_RESTORE);
+        let _ = SetForegroundWindow(hwnd);
+
+        let mut flash = FLASHWINFO {
+            cb_size: std::mem::size_of::<FLASHWINFO>() as u32,
+            hwnd,
+            dw_flags: FLASHW_TRAY | FLASHW_TIMERNOFG,
+            u_count: 3,
+            dw_timeout: 0,
+        };
+
+        let _ = FlashWindowEx(&mut flash);
+    }
+
+    eprintln!("[single-instance] activated existing MHW Radar panel window");
+}
+
+#[cfg(not(windows))]
+fn activate_existing_panel_window() {}
 
 #[derive(Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -92,7 +235,7 @@ fn app_root_dir() -> std::path::PathBuf {
         .and_then(|p| p.parent().map(|d| d.to_path_buf()))
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
 
-    if exe_dir.join("MHW Radar.exe").exists() {
+    if exe_dir.join(PANEL_EXE_NAME).exists() {
         return exe_dir;
     }
 
@@ -120,7 +263,7 @@ fn kill_radar_by_image_name() {
     #[cfg(windows)]
     {
         let _ = command_silent("taskkill")
-            .args(["/IM", RADAR_EXE_NAME, "/F"])
+            .args(["/IM", RADAR_EXE_NAME, "/T", "/F"])
             .status();
     }
 }
@@ -246,6 +389,14 @@ fn kill_radar() {
 }
 
 fn main() {
+    let _single_instance_guard = match acquire_single_instance() {
+        Some(guard) => guard,
+        None => {
+            activate_existing_panel_window();
+            return;
+        }
+    };
+
     spawn_radar();
 
     let run_result = tauri::Builder::default()
@@ -421,11 +572,6 @@ fn emit_download_progress(
 }
 
 /// 使用 Rust HTTP 客户端直接下载 GitHub Release 附件。
-///
-/// 关键修复：Tauri command 本身只负责派发阻塞任务，真正的网络下载放到
-/// blocking 线程池中执行。否则 reqwest::blocking::Response::read + 文件写入
-/// 会占住 Tauri/WebView 事件调度路径，表现为下载时面板无法点击、无法拖拽，
-/// 严重时进度事件也停止刷新。
 #[tauri::command]
 async fn download_update(window: Window, url: String, dest: String) -> Result<DownloadReport, String> {
     tauri::async_runtime::spawn_blocking(move || download_update_blocking(window, url, dest))
@@ -564,7 +710,7 @@ fn download_update_blocking(window: Window, url: String, dest: String) -> Result
 /// `zip_path` — 已下载到本地的更新包完整路径
 #[tauri::command]
 fn spawn_updater(app_dir: String, zip_path: String) -> Result<(), String> {
-    let app_exe = std::path::Path::new(&app_dir).join("MHW Radar.exe");
+    let app_exe = std::path::Path::new(&app_dir).join(PANEL_EXE_NAME);
     if !app_exe.exists() {
         return Err(format!("未找到主程序: {}", app_exe.to_string_lossy()));
     }
@@ -592,20 +738,22 @@ fn spawn_updater(app_dir: String, zip_path: String) -> Result<(), String> {
          echo ZIP_PATH=%ZIP_PATH% >> \"%LOG_PATH%\"\r\n\
          echo PANEL_PID=%PANEL_PID% >> \"%LOG_PATH%\"\r\n\
          \r\n\
-         REM Wait only for the current panel PID. Do not wait by image name,\r\n\
-         REM otherwise another MHW Radar.exe instance can keep the updater blocked.\r\n\
+         REM First wait for the panel instance that spawned this updater.\r\n\
          for /l %%i in (1,1,90) do (\r\n\
            tasklist /fi \"PID eq %PANEL_PID%\" | find \"%PANEL_PID%\" >nul\r\n\
            if errorlevel 1 goto panel_exited\r\n\
            timeout /t 1 /nobreak >nul\r\n\
          )\r\n\
          echo [%date% %time%] Panel process did not exit in time, force killing PID %PANEL_PID%. >> \"%LOG_PATH%\"\r\n\
-         taskkill /f /pid %PANEL_PID% >> \"%LOG_PATH%\" 2>>&1\r\n\
+         taskkill /f /pid %PANEL_PID% /t >> \"%LOG_PATH%\" 2>>&1\r\n\
          timeout /t 1 /nobreak >nul\r\n\
          \r\n\
          :panel_exited\r\n\
          echo [%date% %time%] Panel exited. >> \"%LOG_PATH%\"\r\n\
-         taskkill /f /im mhw-radar.exe >> \"%LOG_PATH%\" 2>>&1\r\n\
+         echo [%date% %time%] Closing all MHW Radar panel and engine processes before update. >> \"%LOG_PATH%\"\r\n\
+         taskkill /f /im \"MHW Radar.exe\" /t >> \"%LOG_PATH%\" 2>>&1\r\n\
+         taskkill /f /im mhw-radar.exe /t >> \"%LOG_PATH%\" 2>>&1\r\n\
+         timeout /t 2 /nobreak >nul\r\n\
          \r\n\
          rmdir /s /q \"%EXTRACT_DIR%\" >> \"%LOG_PATH%\" 2>>&1\r\n\
          mkdir \"%EXTRACT_DIR%\" >> \"%LOG_PATH%\" 2>>&1\r\n\
@@ -622,9 +770,25 @@ fn spawn_updater(app_dir: String, zip_path: String) -> Result<(), String> {
            exit /b 1\r\n\
          )\r\n\
          \r\n\
-         xcopy \"%EXTRACT_DIR%\\*\" \"%APP_DIR%\\\" /E /I /Y >> \"%LOG_PATH%\" 2>>&1\r\n\
-         if errorlevel 1 (\r\n\
-           echo [%date% %time%] File copy failed. >> \"%LOG_PATH%\"\r\n\
+         set \"COPY_OK=0\"\r\n\
+         for /l %%i in (1,1,15) do (\r\n\
+           echo [%date% %time%] Copy attempt %%i. >> \"%LOG_PATH%\"\r\n\
+           taskkill /f /im \"MHW Radar.exe\" /t >> \"%LOG_PATH%\" 2>>&1\r\n\
+           taskkill /f /im mhw-radar.exe /t >> \"%LOG_PATH%\" 2>>&1\r\n\
+           timeout /t 1 /nobreak >nul\r\n\
+           xcopy \"%EXTRACT_DIR%\\*\" \"%APP_DIR%\\\" /E /I /Y >> \"%LOG_PATH%\" 2>>&1\r\n\
+           if not errorlevel 1 (\r\n\
+             set \"COPY_OK=1\"\r\n\
+             goto copy_done\r\n\
+           )\r\n\
+           echo [%date% %time%] Copy attempt %%i failed. >> \"%LOG_PATH%\"\r\n\
+           timeout /t 1 /nobreak >nul\r\n\
+         )\r\n\
+         \r\n\
+         :copy_done\r\n\
+         if not \"%COPY_OK%\"==\"1\" (\r\n\
+           echo [%date% %time%] File copy failed after retries. >> \"%LOG_PATH%\"\r\n\
+           echo Please close all MHW Radar.exe and mhw-radar.exe processes, then try again. >> \"%LOG_PATH%\"\r\n\
            start \"\" notepad.exe \"%LOG_PATH%\"\r\n\
            exit /b 1\r\n\
          )\r\n\
@@ -665,4 +829,3 @@ fn spawn_updater(app_dir: String, zip_path: String) -> Result<(), String> {
 
     Ok(())
 }
-
