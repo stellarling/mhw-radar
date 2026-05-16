@@ -2,12 +2,17 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use std::fs::File;
+use std::io::{Read, Write};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
+
+use tauri::{Emitter, Window};
 
 const RADAR_EXE_NAME: &str = "mhw-radar.exe";
 
@@ -16,6 +21,23 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 static RADAR_PROCESS: Mutex<Option<Child>> = Mutex::new(None);
 static SHUTTING_DOWN: AtomicBool = AtomicBool::new(false);
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DownloadProgress {
+    downloaded: u64,
+    total: Option<u64>,
+    percent: Option<f64>,
+    message: String,
+}
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DownloadReport {
+    path: String,
+    size: u64,
+    elapsed_ms: u128,
+}
 
 /// 获取 mhw-radar.exe 路径（dev 模式下相对于源码目录）
 fn radar_exe_path() -> std::path::PathBuf {
@@ -345,71 +367,189 @@ fn open_external_url(url: String) -> Result<(), String> {
     Err("当前平台不支持自动打开链接".to_string())
 }
 
-fn ps_single_quote(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "''"))
-}
-
 fn cmd_set_value(value: &str) -> String {
     value.replace('"', "\"\"")
 }
 
-/// 通过 PowerShell 从 GitHub 下载更新包。
-#[tauri::command]
-fn download_update(url: String, dest: String) -> Result<(), String> {
-    if !url.starts_with("https://github.com/") && !url.starts_with("https://objects.githubusercontent.com/") {
-        return Err("更新包下载地址不是可信的 GitHub 地址".to_string());
+fn is_allowed_update_host(host: &str) -> bool {
+    matches!(
+        host,
+        "github.com"
+            | "objects.githubusercontent.com"
+            | "github-releases.githubusercontent.com"
+            | "release-assets.githubusercontent.com"
+    )
+}
+
+fn validate_update_url(url: &str) -> Result<reqwest::Url, String> {
+    let parsed = reqwest::Url::parse(url).map_err(|e| format!("更新包地址无效: {}", e))?;
+
+    if parsed.scheme() != "https" {
+        return Err("更新包必须使用 HTTPS 地址".to_string());
     }
 
-    if let Some(parent) = std::path::Path::new(&dest).parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("无法创建临时目录: {}", e))?;
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| "更新包地址缺少域名".to_string())?;
+
+    if !is_allowed_update_host(host) {
+        return Err(format!("更新包下载地址不是可信的 GitHub 地址: {}", host));
     }
 
-    let _ = std::fs::remove_file(&dest);
+    Ok(parsed)
+}
 
-    let script = format!(
-        "$ErrorActionPreference = 'Stop'; \
-         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; \
-         Invoke-WebRequest -Uri {} -OutFile {} -UseBasicParsing; \
-         if (!(Test-Path -LiteralPath {})) {{ throw '更新包下载后不存在' }}; \
-         if ((Get-Item -LiteralPath {}).Length -le 0) {{ throw '更新包为空文件' }}",
-        ps_single_quote(&url),
-        ps_single_quote(&dest),
-        ps_single_quote(&dest),
-        ps_single_quote(&dest),
+fn emit_download_progress(
+    window: &Window,
+    downloaded: u64,
+    total: Option<u64>,
+    message: impl Into<String>,
+) {
+    let percent = total
+        .filter(|v| *v > 0)
+        .map(|v| (downloaded as f64 / v as f64 * 100.0).min(100.0));
+
+    let _ = window.emit(
+        "update-download-progress",
+        DownloadProgress {
+            downloaded,
+            total,
+            percent,
+            message: message.into(),
+        },
     );
+}
 
-    let mut cmd = Command::new("powershell.exe");
-    cmd.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &script])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null());
+/// 使用 Rust HTTP 客户端直接下载 GitHub Release 附件。
+///
+/// 修复点：
+/// 1. 不再调用 PowerShell Invoke-WebRequest，避免部分 Windows 环境中慢、无输出、无总超时；
+/// 2. 支持 GitHub Release asset 的 302 重定向；
+/// 3. 通过 Tauri event 给前端发送下载进度，避免用户误以为 EXE 卡死；
+/// 4. 使用 .part 临时文件，下载完成并校验后再原子替换目标 ZIP。
+#[tauri::command]
+fn download_update(window: Window, url: String, dest: String) -> Result<DownloadReport, String> {
+    let parsed_url = validate_update_url(&url)?;
 
-    #[cfg(windows)]
-    {
-        cmd.creation_flags(CREATE_NO_WINDOW);
+    let dest_path = std::path::PathBuf::from(&dest);
+    if let Some(parent) = dest_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("无法创建临时目录: {}", e))?;
     }
 
-    let output = cmd
-        .output()
-        .map_err(|e| format!("无法启动 PowerShell 下载更新包: {}", e))?;
+    let part_path = dest_path.with_extension("zip.part");
+    let _ = std::fs::remove_file(&dest_path);
+    let _ = std::fs::remove_file(&part_path);
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        if stderr.is_empty() {
-            return Err("下载失败，请检查网络连接或 GitHub Release 附件名称".to_string());
+    emit_download_progress(&window, 0, None, "正在连接 GitHub Release...");
+
+    let client = reqwest::blocking::Client::builder()
+        .connect_timeout(Duration::from_secs(20))
+        .timeout(Duration::from_secs(600))
+        .redirect(reqwest::redirect::Policy::limited(10))
+        .user_agent(format!("MHW-Radar-Updater/{}", env!("CARGO_PKG_VERSION")))
+        .build()
+        .map_err(|e| format!("无法创建下载客户端: {}", e))?;
+
+    let started = Instant::now();
+    let mut last_err = String::new();
+
+    for attempt in 1..=3 {
+        let attempt_message = if attempt == 1 {
+            "正在下载更新包..."
+        } else {
+            "正在重试下载更新包..."
+        };
+        emit_download_progress(&window, 0, None, attempt_message);
+
+        let request_started = Instant::now();
+        let mut response = match client.get(parsed_url.clone()).send() {
+            Ok(resp) => resp,
+            Err(e) => {
+                last_err = format!("连接 GitHub 失败: {}", e);
+                continue;
+            }
+        };
+
+        let final_url = response.url().clone();
+        if let Some(host) = final_url.host_str() {
+            if !is_allowed_update_host(host) {
+                return Err(format!("GitHub 下载跳转到了非信任域名: {}", host));
+            }
+        } else {
+            return Err("GitHub 下载跳转地址缺少域名".to_string());
         }
-        return Err(format!("下载失败: {}", stderr));
+
+        if !response.status().is_success() {
+            last_err = format!("GitHub 返回 HTTP {}", response.status());
+            continue;
+        }
+
+        let total = response.content_length();
+        let mut file =
+            File::create(&part_path).map_err(|e| format!("无法创建临时更新包: {}", e))?;
+
+        let mut downloaded = 0u64;
+        let mut buf = [0u8; 64 * 1024];
+        let mut last_emit = Instant::now();
+
+        loop {
+            let n = response
+                .read(&mut buf)
+                .map_err(|e| format!("下载中断: {}", e))?;
+
+            if n == 0 {
+                break;
+            }
+
+            file.write_all(&buf[..n])
+                .map_err(|e| format!("写入更新包失败: {}", e))?;
+
+            downloaded += n as u64;
+
+            if last_emit.elapsed() >= Duration::from_millis(200) {
+                let speed = downloaded as f64 / request_started.elapsed().as_secs_f64().max(0.001);
+                let message = format!("正在下载更新包，速度约 {:.1} MB/s", speed / 1024.0 / 1024.0);
+                emit_download_progress(&window, downloaded, total, message);
+                last_emit = Instant::now();
+            }
+        }
+
+        file.flush()
+            .map_err(|e| format!("写入更新包失败: {}", e))?;
+        drop(file);
+
+        let size = std::fs::metadata(&part_path)
+            .map_err(|e| format!("无法读取临时更新包: {}", e))?
+            .len();
+
+        if size == 0 {
+            last_err = "下载失败：更新包为空文件".to_string();
+            let _ = std::fs::remove_file(&part_path);
+            continue;
+        }
+
+        std::fs::rename(&part_path, &dest_path).map_err(|e| {
+            format!(
+                "无法保存更新包到 {}: {}",
+                dest_path.to_string_lossy(),
+                e
+            )
+        })?;
+
+        emit_download_progress(&window, size, Some(size), "更新包下载完成，准备安装...");
+
+        return Ok(DownloadReport {
+            path: dest_path.to_string_lossy().to_string(),
+            size,
+            elapsed_ms: started.elapsed().as_millis(),
+        });
     }
 
-    let size = std::fs::metadata(&dest)
-        .map_err(|e| format!("无法读取更新包: {}", e))?
-        .len();
-
-    if size == 0 {
-        return Err("下载失败：更新包为空文件".to_string());
-    }
-
-    Ok(())
+    Err(if last_err.is_empty() {
+        "下载失败，请检查网络连接或手动从 GitHub Releases 下载".to_string()
+    } else {
+        format!("下载失败：{}。请检查网络连接，或手动从 GitHub Releases 下载 ZIP。", last_err)
+    })
 }
 
 /// 生成更新 cmd 并静默启动，然后面板退出。
@@ -427,8 +567,10 @@ fn spawn_updater(app_dir: String, zip_path: String) -> Result<(), String> {
         return Err(format!("未找到已下载的更新包: {}", zip_path));
     }
 
+    let current_pid = std::process::id();
     let log_path = std::env::temp_dir().join("mhw-radar-update.log");
     let cmd_path = std::env::temp_dir().join("mhw-radar-update.cmd");
+    let extract_dir = std::env::temp_dir().join("mhw-radar-update-extract");
 
     let cmd_content = format!(
         "@echo off\r\n\
@@ -436,30 +578,52 @@ fn spawn_updater(app_dir: String, zip_path: String) -> Result<(), String> {
          set \"APP_DIR={}\"\r\n\
          set \"ZIP_PATH={}\"\r\n\
          set \"LOG_PATH={}\"\r\n\
+         set \"EXTRACT_DIR={}\"\r\n\
+         set \"PANEL_PID={}\"\r\n\
          \r\n\
          echo [%date% %time%] MHW Radar updater started > \"%LOG_PATH%\"\r\n\
          echo APP_DIR=%APP_DIR% >> \"%LOG_PATH%\"\r\n\
          echo ZIP_PATH=%ZIP_PATH% >> \"%LOG_PATH%\"\r\n\
+         echo PANEL_PID=%PANEL_PID% >> \"%LOG_PATH%\"\r\n\
          \r\n\
-         REM Wait for the current panel process to exit before replacing MHW Radar.exe.\r\n\
-         for /l %%i in (1,1,60) do (\r\n\
-           tasklist /fi \"imagename eq MHW Radar.exe\" | find /i \"MHW Radar.exe\" >nul\r\n\
+         REM Wait only for the current panel PID. Do not wait by image name,\r\n\
+         REM otherwise another MHW Radar.exe instance can keep the updater blocked.\r\n\
+         for /l %%i in (1,1,90) do (\r\n\
+           tasklist /fi \"PID eq %PANEL_PID%\" | find \"%PANEL_PID%\" >nul\r\n\
            if errorlevel 1 goto panel_exited\r\n\
            timeout /t 1 /nobreak >nul\r\n\
          )\r\n\
-         echo Panel process did not exit in time. Continue anyway. >> \"%LOG_PATH%\"\r\n\
+         echo [%date% %time%] Panel process did not exit in time, force killing PID %PANEL_PID%. >> \"%LOG_PATH%\"\r\n\
+         taskkill /f /pid %PANEL_PID% >> \"%LOG_PATH%\" 2>>&1\r\n\
+         timeout /t 1 /nobreak >nul\r\n\
          \r\n\
          :panel_exited\r\n\
          echo [%date% %time%] Panel exited. >> \"%LOG_PATH%\"\r\n\
          taskkill /f /im mhw-radar.exe >> \"%LOG_PATH%\" 2>>&1\r\n\
          \r\n\
-         powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \"& {{ $ErrorActionPreference = 'Stop'; Expand-Archive -LiteralPath $env:ZIP_PATH -DestinationPath $env:APP_DIR -Force }}\" >> \"%LOG_PATH%\" 2>>&1\r\n\
+         rmdir /s /q \"%EXTRACT_DIR%\" >> \"%LOG_PATH%\" 2>>&1\r\n\
+         mkdir \"%EXTRACT_DIR%\" >> \"%LOG_PATH%\" 2>>&1\r\n\
+         powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \"& {{ $ErrorActionPreference = 'Stop'; Expand-Archive -LiteralPath $env:ZIP_PATH -DestinationPath $env:EXTRACT_DIR -Force }}\" >> \"%LOG_PATH%\" 2>>&1\r\n\
          if errorlevel 1 (\r\n\
            echo [%date% %time%] Expand-Archive failed. >> \"%LOG_PATH%\"\r\n\
            start \"\" notepad.exe \"%LOG_PATH%\"\r\n\
            exit /b 1\r\n\
          )\r\n\
          \r\n\
+         if not exist \"%EXTRACT_DIR%\\MHW Radar.exe\" (\r\n\
+           echo [%date% %time%] Extracted package missing MHW Radar.exe. >> \"%LOG_PATH%\"\r\n\
+           start \"\" notepad.exe \"%LOG_PATH%\"\r\n\
+           exit /b 1\r\n\
+         )\r\n\
+         \r\n\
+         xcopy \"%EXTRACT_DIR%\\*\" \"%APP_DIR%\\\" /E /I /Y >> \"%LOG_PATH%\" 2>>&1\r\n\
+         if errorlevel 1 (\r\n\
+           echo [%date% %time%] File copy failed. >> \"%LOG_PATH%\"\r\n\
+           start \"\" notepad.exe \"%LOG_PATH%\"\r\n\
+           exit /b 1\r\n\
+         )\r\n\
+         \r\n\
+         rmdir /s /q \"%EXTRACT_DIR%\" >> \"%LOG_PATH%\" 2>>&1\r\n\
          del \"%ZIP_PATH%\" >> \"%LOG_PATH%\" 2>>&1\r\n\
          echo [%date% %time%] Starting updated app. >> \"%LOG_PATH%\"\r\n\
          start \"\" /d \"%APP_DIR%\" \"%APP_DIR%\\MHW Radar.exe\"\r\n\
@@ -468,10 +632,11 @@ fn spawn_updater(app_dir: String, zip_path: String) -> Result<(), String> {
         cmd_set_value(&app_dir),
         cmd_set_value(&zip_path),
         cmd_set_value(&log_path.to_string_lossy()),
+        cmd_set_value(&extract_dir.to_string_lossy()),
+        current_pid,
     );
 
-    std::fs::write(&cmd_path, cmd_content)
-        .map_err(|e| format!("无法写入更新脚本: {}", e))?;
+    std::fs::write(&cmd_path, cmd_content).map_err(|e| format!("无法写入更新脚本: {}", e))?;
 
     let mut cmd = Command::new(&cmd_path);
     cmd.stdin(Stdio::null())

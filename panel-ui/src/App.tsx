@@ -38,6 +38,7 @@ export default function App() {
     updateError,
     appVersion,
     latestVersion,
+    downloadProgress,
     checkForUpdates,
     openExternal,
     handleUpdate,
@@ -192,9 +193,11 @@ export default function App() {
               status={updateStatus}
               updateInfo={updateInfo}
               updateError={updateError}
+              downloadProgress={downloadProgress}
               onUpdate={handleUpdate}
-              onDismiss={() => setUpdateStatus("idle")}
-              onRetry={() => setUpdateStatus("available")}
+              onDismiss={() => setUpdateStatus("latest")}
+              onRetry={checkForUpdates}
+              onOpenGithub={openExternal}
             />
             <OpacitySection settings={settings} onChange={updateSetting} />
 
@@ -228,6 +231,7 @@ export default function App() {
               updateInfo={updateInfo}
               updateError={updateError}
               latestVersion={latestVersion}
+              downloadProgress={downloadProgress}
               githubUrl={githubUrl}
               onCheck={checkForUpdates}
               onUpdate={handleUpdate}

@@ -1,10 +1,43 @@
 import { useState, useEffect, useCallback } from "react";
+import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { GITHUB_API_LATEST } from "../constants";
 import { compareVersions, findUpdateAsset } from "../utils/version";
 import { ensureHttpsUrl } from "../utils/url";
-import type { UpdateInfo, UpdateStatus } from "../types";
+import type {
+  DownloadUpdateResult,
+  UpdateDownloadProgress,
+  UpdateInfo,
+  UpdateStatus,
+} from "../types";
+
+const CHECK_TIMEOUT_MS = 15_000;
+
+async function fetchJsonWithTimeout(url: string): Promise<unknown> {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), CHECK_TIMEOUT_MS);
+
+  try {
+    const res = await fetch(url, {
+      cache: "no-store",
+      signal: controller.signal,
+      headers: {
+        Accept: "application/vnd.github+json",
+      },
+    });
+
+    if (!res.ok) throw new Error(`GitHub API 返回 ${res.status}`);
+    return await res.json();
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new Error("连接 GitHub API 超时，请检查网络或稍后重试");
+    }
+    throw err;
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
 
 export function useUpdateChecker() {
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
@@ -12,19 +45,34 @@ export function useUpdateChecker() {
   const [updateError, setUpdateError] = useState("");
   const [appVersion, setAppVersion] = useState("");
   const [latestVersion, setLatestVersion] = useState("");
+  const [downloadProgress, setDownloadProgress] = useState<UpdateDownloadProgress | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+
+    const unlistenPromise = listen<UpdateDownloadProgress>(
+      "update-download-progress",
+      (event) => {
+        if (mounted) setDownloadProgress(event.payload);
+      },
+    );
+
+    return () => {
+      mounted = false;
+      void unlistenPromise.then((unlisten) => unlisten());
+    };
+  }, []);
 
   const checkForUpdates = useCallback(async () => {
     setUpdateStatus("checking");
     setUpdateError("");
+    setDownloadProgress(null);
 
     try {
       const currentVersion = await invoke<string>("get_version");
       setAppVersion(currentVersion);
 
-      const res = await fetch(GITHUB_API_LATEST, { cache: "no-store" });
-      if (!res.ok) throw new Error(`GitHub API 返回 ${res.status}`);
-
-      const data = await res.json();
+      const data = await fetchJsonWithTimeout(GITHUB_API_LATEST);
       const latestTag = String((data as { tag_name?: unknown }).tag_name ?? "");
       if (!latestTag) throw new Error("GitHub Release 未返回 tag_name");
 
@@ -35,6 +83,7 @@ export function useUpdateChecker() {
         if (!asset) {
           throw new Error(`Release ${latestTag} 中未找到更新包`);
         }
+
         setUpdateInfo({
           tag: latestTag,
           url: ensureHttpsUrl(asset.browser_download_url),
@@ -63,20 +112,45 @@ export function useUpdateChecker() {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setUpdateError(message);
-      setUpdateStatus((current) => current === "available" ? current : "error");
+      setUpdateStatus((current) => (current === "available" ? current : "error"));
     }
   }, []);
 
   const handleUpdate = useCallback(async () => {
     if (!updateInfo) return;
+
     setUpdateStatus("downloading");
+    setUpdateError("");
+    setDownloadProgress({
+      downloaded: 0,
+      total: null,
+      percent: null,
+      message: "正在准备下载更新包...",
+    });
+
     try {
-      setUpdateError("");
       const tempDir = await invoke<string>("get_temp_dir");
-      const zipPath = `${tempDir}\\${updateInfo.fileName}`;
-      await invoke("download_update", { url: updateInfo.url, dest: zipPath });
+      const safeTag = updateInfo.tag.replace(/[^a-zA-Z0-9._-]/g, "_");
+      const unique = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      const zipPath = `${tempDir}\\mhw-radar-update-${safeTag}-${unique}\\${updateInfo.fileName}`;
+
+      const result = await invoke<DownloadUpdateResult>("download_update", {
+        url: updateInfo.url,
+        dest: zipPath,
+      });
+
+      setDownloadProgress({
+        downloaded: result.size,
+        total: result.size,
+        percent: 100,
+        message: `更新包下载完成，用时 ${(result.elapsedMs / 1000).toFixed(1)} 秒`,
+      });
+
+      setUpdateStatus("installing");
+
       const appDir = await invoke<string>("get_app_dir");
-      await invoke("spawn_updater", { appDir, zipPath });
+      await invoke("spawn_updater", { appDir, zipPath: result.path || zipPath });
+
       await getCurrentWindow().destroy();
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -92,6 +166,7 @@ export function useUpdateChecker() {
     updateError,
     appVersion,
     latestVersion,
+    downloadProgress,
     checkForUpdates,
     openExternal,
     handleUpdate,

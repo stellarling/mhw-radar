@@ -1,16 +1,26 @@
 import { btnStyle } from "../constants";
-import type { UpdateInfo, UpdateStatus } from "../types";
+import { GITHUB_RELEASES_URL } from "../constants/api";
+import { formatProgress } from "../utils/version";
+import type { UpdateDownloadProgress, UpdateInfo, UpdateStatus } from "../types";
 
 export function UpdateBanner({
-  status, updateInfo, updateError,
-  onUpdate, onDismiss, onRetry,
+  status,
+  updateInfo,
+  updateError,
+  downloadProgress,
+  onUpdate,
+  onDismiss,
+  onRetry,
+  onOpenGithub,
 }: {
   status: UpdateStatus;
   updateInfo: UpdateInfo | null;
   updateError: string;
+  downloadProgress: UpdateDownloadProgress | null;
   onUpdate: () => void;
   onDismiss: () => void;
   onRetry: () => void;
+  onOpenGithub: (url: string) => void;
 }) {
   if (status === "available" && updateInfo) {
     return (
@@ -40,7 +50,25 @@ export function UpdateBanner({
         background: "rgba(191,167,107,0.08)",
         borderBottom: "1px solid #331e12",
       }}>
-        <span style={{ color: "#b0b0b0", fontSize: 13 }}>正在下载更新...</span>
+        <span style={{ color: "#b0b0b0", fontSize: 13 }}>
+          {downloadProgress?.message || "正在下载更新包..."}
+          {downloadProgress ? ` · ${formatProgress(downloadProgress)}` : ""}
+        </span>
+      </div>
+    );
+  }
+
+  if (status === "installing") {
+    return (
+      <div style={{
+        display: "flex", alignItems: "center", gap: 8,
+        padding: "8px 20px",
+        background: "rgba(191,167,107,0.08)",
+        borderBottom: "1px solid #331e12",
+      }}>
+        <span style={{ color: "#b0b0b0", fontSize: 13 }}>
+          更新包已下载，正在启动安装脚本...
+        </span>
       </div>
     );
   }
@@ -60,6 +88,10 @@ export function UpdateBanner({
           onClick={onRetry}
           style={{ ...btnStyle, background: "transparent", color: "#8ab4f8", fontSize: 12 }}
         >重试</button>
+        <button
+          onClick={() => onOpenGithub(GITHUB_RELEASES_URL)}
+          style={{ ...btnStyle, background: "transparent", color: "#8ab4f8", fontSize: 12 }}
+        >打开 GitHub 手动下载</button>
       </div>
     );
   }

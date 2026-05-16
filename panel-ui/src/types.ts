@@ -41,7 +41,27 @@ export interface UpdateInfo {
   fileName: string;
 }
 
-export type UpdateStatus = "idle" | "checking" | "available" | "latest" | "downloading" | "error";
+export interface UpdateDownloadProgress {
+  downloaded: number;
+  total: number | null;
+  percent: number | null;
+  message: string;
+}
+
+export interface DownloadUpdateResult {
+  path: string;
+  size: number;
+  elapsedMs: number;
+}
+
+export type UpdateStatus =
+  | "idle"
+  | "checking"
+  | "available"
+  | "latest"
+  | "downloading"
+  | "installing"
+  | "error";
 
 export interface GitHubReleaseAsset {
   name: string;

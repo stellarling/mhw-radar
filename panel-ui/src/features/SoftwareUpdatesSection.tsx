@@ -3,8 +3,8 @@ import { btnStyle } from "../constants";
 import { Card } from "../ui/Card";
 import { SectionHeader } from "../ui/SectionHeader";
 import { SectionWrapper } from "../layouts/SectionWrapper";
-import { formatUpdateStatus } from "../utils/version";
-import type { UpdateInfo, UpdateStatus } from "../types";
+import { formatProgress, formatUpdateStatus } from "../utils/version";
+import type { UpdateDownloadProgress, UpdateInfo, UpdateStatus } from "../types";
 
 interface SoftwareUpdatesSectionProps {
   updateStatus: UpdateStatus;
@@ -12,6 +12,7 @@ interface SoftwareUpdatesSectionProps {
   updateError: string;
   latestVersion: string;
   githubUrl: string;
+  downloadProgress: UpdateDownloadProgress | null;
   onCheck: () => void;
   onUpdate: () => void;
   onOpenGithub: (url: string) => void;
@@ -19,9 +20,22 @@ interface SoftwareUpdatesSectionProps {
 
 export const SoftwareUpdatesSection = forwardRef<HTMLDivElement, SoftwareUpdatesSectionProps>(
   function SoftwareUpdatesSection({
-    updateStatus, updateInfo, updateError, latestVersion, githubUrl,
-    onCheck, onUpdate, onOpenGithub,
+    updateStatus,
+    updateInfo,
+    updateError,
+    latestVersion,
+    githubUrl,
+    downloadProgress,
+    onCheck,
+    onUpdate,
+    onOpenGithub,
   }, ref) {
+    const busy = updateStatus === "checking" || updateStatus === "downloading" || updateStatus === "installing";
+    const progressPercent =
+      downloadProgress?.percent === null || downloadProgress?.percent === undefined
+        ? null
+        : Math.max(0, Math.min(100, downloadProgress.percent));
+
     return (
       <SectionWrapper ref={ref} id="software-updates">
         <SectionHeader title="软件更新" description="版本管理、更新与更新日志" />
@@ -31,7 +45,7 @@ export const SoftwareUpdatesSection = forwardRef<HTMLDivElement, SoftwareUpdates
             <div style={{ color: "#bfa76b", fontSize: 14, marginBottom: 6 }}>自动更新</div>
             <div
               style={{
-                color: updateStatus === "available"
+                color: updateStatus === "available" || updateStatus === "downloading" || updateStatus === "installing"
                   ? "#bfa76b"
                   : updateStatus === "error"
                     ? "#ff8a80"
@@ -40,8 +54,43 @@ export const SoftwareUpdatesSection = forwardRef<HTMLDivElement, SoftwareUpdates
                 lineHeight: 1.7,
               }}
             >
-              {formatUpdateStatus(updateStatus, updateInfo, updateError, latestVersion)}
+              {formatUpdateStatus(updateStatus, updateInfo, updateError, latestVersion, downloadProgress)}
             </div>
+
+            {(updateStatus === "downloading" || updateStatus === "installing") && (
+              <div style={{ marginTop: 10 }}>
+                <div
+                  style={{
+                    height: 8,
+                    borderRadius: 999,
+                    background: "#2a1a10",
+                    overflow: "hidden",
+                    border: "1px solid #443018",
+                  }}
+                >
+                  <div
+                    style={{
+                      height: "100%",
+                      width: progressPercent === null ? "18%" : `${progressPercent}%`,
+                      minWidth: progressPercent === null ? 24 : 0,
+                      background: "#bfa76b",
+                      transition: "width 0.2s ease",
+                    }}
+                  />
+                </div>
+                <div style={{ marginTop: 6, color: "#8c8c8c", fontSize: 12, lineHeight: 1.6 }}>
+                  {downloadProgress?.message || "正在下载更新包..."}
+                  {downloadProgress ? ` · ${formatProgress(downloadProgress)}` : ""}
+                </div>
+              </div>
+            )}
+
+            {updateStatus === "error" && (
+              <div style={{ marginTop: 8, color: "#8c8c8c", fontSize: 12, lineHeight: 1.7 }}>
+                如果 GitHub 连接缓慢或失败，可以点击右侧 GitHub 链接手动下载最新 ZIP 后覆盖安装。
+              </div>
+            )}
+
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
               {updateStatus === "available" && updateInfo && (
                 <button
@@ -66,10 +115,10 @@ export const SoftwareUpdatesSection = forwardRef<HTMLDivElement, SoftwareUpdates
                   fontSize: 13,
                   color: "#8c8c8c",
                   border: "1px solid #555",
-                  opacity: updateStatus === "checking" || updateStatus === "downloading" ? 0.55 : 1,
-                  cursor: updateStatus === "checking" || updateStatus === "downloading" ? "not-allowed" : "pointer",
+                  opacity: busy ? 0.55 : 1,
+                  cursor: busy ? "not-allowed" : "pointer",
                 }}
-                disabled={updateStatus === "checking" || updateStatus === "downloading"}
+                disabled={busy}
                 onClick={onCheck}
               >
                 {updateStatus === "checking" ? "检查中" : "重新检查"}
@@ -81,8 +130,11 @@ export const SoftwareUpdatesSection = forwardRef<HTMLDivElement, SoftwareUpdates
             <div style={{ color: "#bfa76b", fontSize: 14, marginBottom: 6 }}>GitHub</div>
             <div
               onClick={() => onOpenGithub(githubUrl)}
-              style={{ color: "#8ab4f8", fontSize: 13, cursor: "pointer" }}
+              style={{ color: "#8ab4f8", fontSize: 13, cursor: "pointer", wordBreak: "break-all" }}
             >{githubUrl}</div>
+            <div style={{ color: "#8c8c8c", fontSize: 12, lineHeight: 1.7, marginTop: 8 }}>
+              自动更新依赖 GitHub Release 附件下载。网络不可达、被代理拦截或 CDN 较慢时，自动更新会失败或变慢。
+            </div>
             <div
               style={{
                 display: "inline-block",
