@@ -422,13 +422,19 @@ fn emit_download_progress(
 
 /// 使用 Rust HTTP 客户端直接下载 GitHub Release 附件。
 ///
-/// 修复点：
-/// 1. 不再调用 PowerShell Invoke-WebRequest，避免部分 Windows 环境中慢、无输出、无总超时；
-/// 2. 支持 GitHub Release asset 的 302 重定向；
-/// 3. 通过 Tauri event 给前端发送下载进度，避免用户误以为 EXE 卡死；
-/// 4. 使用 .part 临时文件，下载完成并校验后再原子替换目标 ZIP。
+/// 关键修复：Tauri command 本身只负责派发阻塞任务，真正的网络下载放到
+/// blocking 线程池中执行。否则 reqwest::blocking::Response::read + 文件写入
+/// 会占住 Tauri/WebView 事件调度路径，表现为下载时面板无法点击、无法拖拽，
+/// 严重时进度事件也停止刷新。
 #[tauri::command]
-fn download_update(window: Window, url: String, dest: String) -> Result<DownloadReport, String> {
+async fn download_update(window: Window, url: String, dest: String) -> Result<DownloadReport, String> {
+    tauri::async_runtime::spawn_blocking(move || download_update_blocking(window, url, dest))
+        .await
+        .map_err(|e| format!("下载线程异常: {}", e))?
+}
+
+/// 真正执行阻塞下载的函数。只能在 blocking 线程中调用。
+fn download_update_blocking(window: Window, url: String, dest: String) -> Result<DownloadReport, String> {
     let parsed_url = validate_update_url(&url)?;
 
     let dest_path = std::path::PathBuf::from(&dest);
@@ -659,3 +665,4 @@ fn spawn_updater(app_dir: String, zip_path: String) -> Result<(), String> {
 
     Ok(())
 }
+
