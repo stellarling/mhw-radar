@@ -13,6 +13,8 @@ use serde::{Deserialize, Serialize};
 pub const MAX_ROUNDS: usize = 100;
 /// 每轮最大日志条数
 pub const MAX_LOG_ENTRIES: usize = 2000;
+/// 连接诊断日志最大条数
+pub const MAX_CONNECTION_ENTRIES: usize = 200;
 
 /// 任务状态（来自游戏内存 offset 0x54）
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -144,6 +146,124 @@ impl LogEntry {
     }
 }
 
+// ── 连接诊断日志 ────────────────────────────────────────────────
+
+/// 连接事件类型
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub enum ConnectionEventType {
+    Waiting,
+    Connected,
+    Disconnected,
+    Reconnected,
+    ReadError,
+    Info,
+}
+
+impl ConnectionEventType {
+    #[allow(dead_code)]
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ConnectionEventType::Waiting => "waiting",
+            ConnectionEventType::Connected => "connected",
+            ConnectionEventType::Disconnected => "disconnected",
+            ConnectionEventType::Reconnected => "reconnected",
+            ConnectionEventType::ReadError => "read_error",
+            ConnectionEventType::Info => "info",
+        }
+    }
+}
+
+/// 单条连接诊断日志
+#[derive(Clone, Serialize)]
+pub struct ConnectionLogEntry {
+    pub timestamp: String,
+    pub event_type: ConnectionEventType,
+    pub message: String,
+    pub pid: Option<u32>,
+    pub module_base: Option<u64>,
+}
+
+impl ConnectionLogEntry {
+    fn new(event_type: ConnectionEventType, message: String, pid: Option<u32>, module_base: Option<u64>) -> Self {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default();
+        let total_secs = now.as_secs() + 8 * 3600;
+        let h = (total_secs / 3600) % 24;
+        let m = (total_secs / 60) % 60;
+        let s = total_secs % 60;
+        let timestamp = format!("{:02}:{:02}:{:02}", h, m, s);
+        Self {
+            timestamp,
+            event_type,
+            message,
+            pid,
+            module_base,
+        }
+    }
+}
+
+/// 连接诊断日志存储
+#[derive(Clone)]
+pub struct ConnectionLogStorage {
+    pub entries: VecDeque<ConnectionLogEntry>,
+}
+
+impl ConnectionLogStorage {
+    pub fn new() -> Self {
+        Self {
+            entries: VecDeque::with_capacity(MAX_CONNECTION_ENTRIES),
+        }
+    }
+
+    pub fn push(&mut self, entry: ConnectionLogEntry) {
+        if self.entries.len() >= MAX_CONNECTION_ENTRIES {
+            self.entries.pop_front();
+        }
+        self.entries.push_back(entry);
+    }
+
+    pub fn all_entries(&self) -> Vec<ConnectionLogEntry> {
+        self.entries.iter().cloned().collect()
+    }
+
+    pub fn clear(&mut self) {
+        self.entries.clear();
+    }
+}
+
+/// 线程安全的连接诊断日志句柄
+#[derive(Clone)]
+pub struct ConnectionLogger {
+    storage: std::sync::Arc<std::sync::Mutex<ConnectionLogStorage>>,
+}
+
+impl ConnectionLogger {
+    pub fn new() -> (Self, std::sync::Arc<std::sync::Mutex<ConnectionLogStorage>>) {
+        let storage = std::sync::Arc::new(std::sync::Mutex::new(ConnectionLogStorage::new()));
+        let handle = Self {
+            storage: storage.clone(),
+        };
+        (handle, storage)
+    }
+
+    pub fn log(&self, event_type: ConnectionEventType, message: impl Into<String>) {
+        self.log_with(event_type, message.into(), None, None);
+    }
+
+    pub fn log_with(
+        &self,
+        event_type: ConnectionEventType,
+        message: impl Into<String>,
+        pid: Option<u32>,
+        module_base: Option<u64>,
+    ) {
+        if let Ok(mut storage) = self.storage.lock() {
+            storage.push(ConnectionLogEntry::new(event_type, message.into(), pid, module_base));
+        }
+    }
+}
+
 /// 日志存储（Mutex 内部数据），按轮次组织
 #[derive(Clone)]
 pub struct LogStorage {
@@ -153,9 +273,9 @@ pub struct LogStorage {
 
 impl LogStorage {
     pub fn new() -> Self {
-        let mut rounds = VecDeque::new();
-        rounds.push_back(VecDeque::with_capacity(MAX_LOG_ENTRIES));
-        Self { rounds }
+        Self {
+            rounds: VecDeque::new(),
+        }
     }
 
     /// 开始新一轮次（任务开始时调用）。返回轮次索引（0-based）。
@@ -196,10 +316,9 @@ impl LogStorage {
         self.rounds.len()
     }
 
-    /// 清空所有日志，重置为 1 个空轮次
+    /// 清空所有日志
     pub fn clear(&mut self) {
         self.rounds.clear();
-        self.rounds.push_back(VecDeque::with_capacity(MAX_LOG_ENTRIES));
     }
 
     /// 合并所有轮次的日志（用于"导出全部"）

@@ -20,6 +20,11 @@ export function StatusBar({
     }}>
       <div style={{ textAlign: "left" }}>
         <StatusDot connected={!!status?.connected} label={status?.connected ? "已连接" : "未连接"} />
+        {status?.pid != null && (
+          <span style={{ color: "#8c8c8c", fontSize: 12, marginLeft: 6 }}>
+            PID {status.pid}
+          </span>
+        )}
       </div>
       <div style={{ textAlign: "left", color: "#dcdcdc", fontSize: 14, whiteSpace: "nowrap" }}>
         任务: {status?.quest_name || (status?.connected ? (status?.in_quest ? "任务中" : "无任务") : "未知")}

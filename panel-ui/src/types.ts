@@ -19,6 +19,9 @@ export interface PanelStatus {
   monster_name: string | null;
   quest_elapsed_ms: number | null;
   quest_name: string | null;
+  connection_state: string;
+  pid: number | null;
+  module_base: number | null;
 }
 
 export interface LogEntry {
@@ -52,6 +55,20 @@ export interface DownloadUpdateResult {
   path: string;
   size: number;
   elapsedMs: number;
+}
+
+export type ConnectionEventType = "Waiting" | "Connected" | "Disconnected" | "Reconnected" | "ReadError" | "Info";
+
+export interface ConnectionLogEntry {
+  timestamp: string;
+  event_type: ConnectionEventType;
+  message: string;
+  pid: number | null;
+  module_base: number | null;
+}
+
+export interface ConnectionLogResponse {
+  entries: ConnectionLogEntry[];
 }
 
 export type UpdateStatus =

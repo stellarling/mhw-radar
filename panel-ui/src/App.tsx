@@ -9,6 +9,7 @@ import { HeaderBar } from "./layouts/HeaderBar";
 import { StatusBar } from "./layouts/StatusBar";
 import { OpacitySection } from "./features/OpacitySection";
 import { ToggleSection } from "./features/ToggleSection";
+import { ConnectionDiagnostics } from "./features/ConnectionDiagnostics";
 import { LogSection } from "./features/LogSection";
 import { UpdateBanner } from "./features/UpdateBanner";
 import { LogAnalysisSection } from "./features/LogAnalysisSection";
@@ -19,7 +20,7 @@ import { useScrollSpy } from "./hooks/useScrollSpy";
 import { useUpdateChecker } from "./hooks/useUpdateChecker";
 import { useLogExport } from "./hooks/useLogExport";
 import { readApiError } from "./utils/api";
-import type { Settings, LogEntry, LogResponse, BoolKey, PanelStatus } from "./types";
+import type { Settings, LogEntry, LogResponse, ConnectionLogEntry, ConnectionLogResponse, BoolKey, PanelStatus } from "./types";
 
 export default function App() {
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -31,6 +32,7 @@ export default function App() {
   const totalRoundsRef = useRef(0);
   const logsRequestIdRef = useRef(0);
 
+  const [connectionLogs, setConnectionLogs] = useState<ConnectionLogEntry[]>([]);
   const [autoScroll, setAutoScroll] = useState(true);
 
   const { displayTime } = useQuestTimer(status);
@@ -117,6 +119,23 @@ export default function App() {
     return () => clearInterval(id);
   }, [fetchLogs]);
 
+  // ── Connection log polling ──
+  useEffect(() => {
+    const fetchConnectionLogs = async () => {
+      try {
+        const res = await fetch(`${API}/api/connection-logs`);
+        const data: ConnectionLogResponse = await res.json();
+        setConnectionLogs(data.entries);
+      } catch {
+        /* backend not running yet */
+      }
+    };
+
+    fetchConnectionLogs();
+    const id = setInterval(fetchConnectionLogs, 2000);
+    return () => clearInterval(id);
+  }, []);
+
   // ── Settings update ──
   const updateSetting = async (patch: Partial<Settings>) => {
     if (!settings) return;
@@ -148,10 +167,10 @@ export default function App() {
       }
 
       logsRequestIdRef.current += 1;
-      totalRoundsRef.current = 1;
+      totalRoundsRef.current = 0;
       setLogEntries([]);
       setCurrentRound(0);
-      setTotalRounds(1);
+      setTotalRounds(0);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       window.alert(`清除日志失败：${message}`);
@@ -235,6 +254,10 @@ export default function App() {
 
             <div ref={sectionRefs.basicTools} id="basic-tools">
               <ToggleSection settings={settings} onToggle={handleToggle} />
+
+              <ConnectionDiagnostics
+                logs={connectionLogs}
+              />
             </div>
 
             <div
@@ -242,6 +265,7 @@ export default function App() {
               id="hunting-log"
               style={{ display: "flex", flexDirection: "column" }}
             >
+              <div style={{ height: 1, background: "#331e12", margin: "0 20px" }} />
               <LogSection
                 entries={logEntries}
                 totalRounds={totalRounds}

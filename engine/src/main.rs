@@ -25,7 +25,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use log::{Logger, LogStorage};
+use log::{ConnectionLogger, ConnectionLogStorage, Logger, LogStorage};
 use overlay::RadarApp;
 use reader::spawn_data_reader;
 use types::Settings;
@@ -44,18 +44,28 @@ fn main() -> Result<(), eframe::Error> {
         std::process::exit(1);
     }
 
-    // 创建日志系统
+    // 创建狩猎日志系统
     let (logger, logger_storage) = Logger::new();
     let logger_storage: Arc<Mutex<LogStorage>> = logger_storage;
+
+    // 创建连接诊断日志系统
+    let (connection_logger, connection_log_storage) = ConnectionLogger::new();
+    let connection_log_storage: Arc<Mutex<ConnectionLogStorage>> = connection_log_storage;
 
     // 创建共享设置
     let settings = Arc::new(Mutex::new(Settings::default()));
 
     // 启动后台数据读取线程
-    let shared_data = spawn_data_reader(logger);
+    let shared_data = spawn_data_reader(logger, connection_logger);
 
     // 启动 IPC API 服务器（供 Tauri 面板调用）
-    ipc::start_server(17320, settings.clone(), logger_storage, shared_data.clone());
+    ipc::start_server(
+        17320,
+        settings.clone(),
+        logger_storage,
+        connection_log_storage,
+        shared_data.clone(),
+    );
 
     // 注册全局热键 Ctrl+Shift+U
     let hotkey_signal = Arc::new(AtomicBool::new(false));

@@ -238,7 +238,6 @@ export const LogSection = forwardRef<
 
   return (
     <div
-      id="hunting-log"
       style={{
         display: "flex",
         flexDirection: "column",
@@ -261,68 +260,70 @@ export const LogSection = forwardRef<
           {entries.length} 条 / {totalRounds} 轮
         </span>
 
-        {/* 分页导航（跟随标题） */}
-        <div style={{ display: "flex", alignItems: "center", gap: 3, marginLeft: 8 }}>
-          <button
-            style={{
-              ...arrowBtnStyle,
-              opacity: currentRound <= 0 ? 0.45 : 1,
-              cursor: currentRound <= 0 ? "not-allowed" : "pointer",
-            }}
-            disabled={currentRound <= 0}
-            onClick={goPrevPage}
-            title="上一页"
-          >
-            ◀
-          </button>
-
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 2,
-              color: "#b0b0b0",
-              fontSize: 13,
-              userSelect: "none",
-            }}
-          >
-            <input
-              ref={pageInputRef}
-              value={pageInput}
-              onChange={(e) => setPageInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") handlePageSubmit();
-              }}
-              onBlur={handlePageSubmit}
+        {/* 分页导航（跟随标题，totalRounds=0 时隐藏） */}
+        {totalRounds > 0 && (
+          <div style={{ display: "flex", alignItems: "center", gap: 3, marginLeft: 8 }}>
+            <button
               style={{
-                width: 32,
-                textAlign: "center",
-                background: "#1a0f08",
-                border: "1px solid #443322",
-                borderRadius: 3,
-                color: "#dcdcdc",
-                fontSize: 13,
-                padding: "2px 0",
-                outline: "none",
+                ...arrowBtnStyle,
+                opacity: currentRound <= 0 ? 0.45 : 1,
+                cursor: currentRound <= 0 ? "not-allowed" : "pointer",
               }}
-            />
+              disabled={currentRound <= 0}
+              onClick={goPrevPage}
+              title="上一页"
+            >
+              ◀
+            </button>
 
-            <span style={{ color: "#b0b0b0" }}>/ {totalRounds}</span>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 2,
+                color: "#b0b0b0",
+                fontSize: 13,
+                userSelect: "none",
+              }}
+            >
+              <input
+                ref={pageInputRef}
+                value={pageInput}
+                onChange={(e) => setPageInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handlePageSubmit();
+                }}
+                onBlur={handlePageSubmit}
+                style={{
+                  width: 32,
+                  textAlign: "center",
+                  background: "#1a0f08",
+                  border: "1px solid #443322",
+                  borderRadius: 3,
+                  color: "#dcdcdc",
+                  fontSize: 13,
+                  padding: "2px 0",
+                  outline: "none",
+                }}
+              />
+
+              <span style={{ color: "#b0b0b0" }}>/ {totalRounds}</span>
+            </div>
+
+            <button
+              style={{
+                ...arrowBtnStyle,
+                opacity: currentRound >= totalRounds - 1 ? 0.45 : 1,
+                cursor: currentRound >= totalRounds - 1 ? "not-allowed" : "pointer",
+              }}
+              disabled={currentRound >= totalRounds - 1}
+              onClick={goNextPage}
+              title="下一页"
+            >
+              ▶
+            </button>
           </div>
-
-          <button
-            style={{
-              ...arrowBtnStyle,
-              opacity: currentRound >= totalRounds - 1 ? 0.45 : 1,
-              cursor: currentRound >= totalRounds - 1 ? "not-allowed" : "pointer",
-            }}
-            disabled={currentRound >= totalRounds - 1}
-            onClick={goNextPage}
-            title="下一页"
-          >
-            ▶
-          </button>
-        </div>
+        )}
 
         {/* 自动滚动只控制当前页内部滚动 */}
         <div style={{ marginLeft: "auto" }}>
@@ -359,7 +360,7 @@ export const LogSection = forwardRef<
               textAlign: "center",
             }}
           >
-            等待游戏数据...
+            {totalRounds <= 0 ? "暂无狩猎记录" : "等待游戏数据..."}
           </div>
         ) : (
           entries.map((entry, i) => {

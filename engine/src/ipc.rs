@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
+use crate::log::ConnectionLogStorage;
 use crate::log::LogStorage;
 use crate::types::{PanelStatus, RadarData, Settings};
 
@@ -20,6 +21,7 @@ pub fn start_server(
     port: u16,
     settings: Arc<Mutex<Settings>>,
     logs: Arc<Mutex<LogStorage>>,
+    connection_logs: Arc<Mutex<ConnectionLogStorage>>,
     radar_data: Arc<Mutex<RadarData>>,
 ) {
     let addr = format!("127.0.0.1:{}", port);
@@ -30,8 +32,13 @@ pub fn start_server(
     thread::spawn(move || {
         for stream in listener.incoming() {
             if let Ok(stream) = stream {
-                let (s, l, r) = (settings.clone(), logs.clone(), radar_data.clone());
-                thread::spawn(move || handle(stream, &s, &l, &r));
+                let (s, l, c, r) = (
+                    settings.clone(),
+                    logs.clone(),
+                    connection_logs.clone(),
+                    radar_data.clone(),
+                );
+                thread::spawn(move || handle(stream, &s, &l, &c, &r));
             }
         }
     });
@@ -106,6 +113,7 @@ fn handle(
     mut stream: TcpStream,
     settings: &Arc<Mutex<Settings>>,
     logs: &Arc<Mutex<LogStorage>>,
+    connection_logs: &Arc<Mutex<ConnectionLogStorage>>,
     radar_data: &Arc<Mutex<RadarData>>,
 ) {
     let mut buf = vec![0u8; 4096];
@@ -176,7 +184,7 @@ fn handle(
         return send_binary(&mut stream, 200, "image/png", png);
     }
 
-    match route(&req, settings, logs, radar_data) {
+    match route(&req, settings, logs, connection_logs, radar_data) {
         Some((status, body)) => send_cors(&mut stream, status, &body),
         None => send_cors(&mut stream, 404, &json_error("Not Found")),
     }
@@ -186,6 +194,7 @@ fn route(
     req: &Request,
     settings: &Arc<Mutex<Settings>>,
     logs: &Arc<Mutex<LogStorage>>,
+    connection_logs: &Arc<Mutex<ConnectionLogStorage>>,
     radar_data: &Arc<Mutex<RadarData>>,
 ) -> Option<(u16, String)> {
     match (req.method.as_str(), req.path.as_str()) {
@@ -234,11 +243,14 @@ fn route(
             let d = radar_data.lock().ok()?;
             let status = PanelStatus {
                 connected: d.connected,
-                in_quest: d.quest_elapsed_ms.is_some(),
+                in_quest: d.in_quest,
                 has_monster: d.has_monster,
                 monster_name: d.monster_name,
                 quest_elapsed_ms: d.quest_elapsed_ms,
                 quest_name: d.quest_name,
+                connection_state: d.connection_state.clone(),
+                pid: d.pid,
+                module_base: d.module_base,
             };
             serde_json::to_string(&status).ok().map(|b| (200, b))
         }
@@ -310,6 +322,25 @@ fn route(
                     500,
                     json_error(format!("failed to write export file '{}': {}", path.display(), e)),
                 )),
+            }
+        }
+
+        ("GET", "/api/connection-logs") => {
+            let store = connection_logs.lock().ok()?;
+            let entries = store.all_entries();
+            drop(store);
+            Some((
+                200,
+                serde_json::json!({ "entries": entries }).to_string(),
+            ))
+        }
+
+        ("POST", "/api/connection-logs/clear") => {
+            if let Ok(mut store) = connection_logs.lock() {
+                store.clear();
+                Some((204, String::new()))
+            } else {
+                Some((500, json_error("failed to lock connection log storage")))
             }
         }
 

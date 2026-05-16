@@ -13,7 +13,7 @@ use process_memory::{ProcessHandle, TryIntoProcessHandle};
 use sysinfo::System;
 
 use crate::game_data::{load_monster_ai_configs, load_monster_names, load_quest_names, lookup_action_name};
-use crate::log::{Logger, QuestState};
+use crate::log::{ConnectionEventType, ConnectionLogger, Logger, QuestState};
 use crate::memory::{self, read_ptr_chain};
 use crate::types::{MonsterHp, RadarData};
 
@@ -118,8 +118,16 @@ struct DataReader {
     counterattack_base: u64,
     game_base: u64,
     disconnect_frames: u32,
-    no_game_printed: bool,
-    connected_logged: bool,
+    /// 当前连接状态: "init" | "waiting" | "connected" | "disconnected"
+    connection_state: String,
+    /// 是否曾经成功连接过（用于判断首次连接 vs 重连）
+    was_ever_connected: bool,
+    /// 断线后下次重连是否应标记为 Reconnected（独立于 connection_state）
+    needs_reconnect_event: bool,
+    /// 游戏进程 PID
+    pid: Option<u32>,
+    /// 游戏进程模块基址
+    module_base: Option<u64>,
     last_action_id: i32,
     action_id_init: bool,
     last_frame: f32,
@@ -145,6 +153,7 @@ struct DataReader {
     monster_names: HashMap<i32, &'static str>,
     quest_names: HashMap<i32, &'static str>,
     logger: Logger,
+    connection_logger: ConnectionLogger,
     prev_quest_state: QuestState,
     prev_quest_id: i32,
     quest_counter: i32,
@@ -152,7 +161,12 @@ struct DataReader {
 }
 
 impl DataReader {
-    fn new(monster_names: HashMap<i32, &'static str>, quest_names: HashMap<i32, &'static str>, logger: Logger) -> Self {
+    fn new(
+        monster_names: HashMap<i32, &'static str>,
+        quest_names: HashMap<i32, &'static str>,
+        logger: Logger,
+        connection_logger: ConnectionLogger,
+    ) -> Self {
         let now = Instant::now();
         Self {
             handle: None,
@@ -162,8 +176,11 @@ impl DataReader {
             counterattack_base: 0,
             game_base: 0,
             disconnect_frames: 0,
-            no_game_printed: false,
-            connected_logged: false,
+            connection_state: "init".to_string(),
+            was_ever_connected: false,
+            needs_reconnect_event: false,
+            pid: None,
+            module_base: None,
             last_action_id: 0,
             action_id_init: false,
             last_frame: 0.0,
@@ -183,6 +200,7 @@ impl DataReader {
             monster_names,
             quest_names,
             logger,
+            connection_logger,
             prev_quest_state: QuestState::None,
             prev_quest_id: 0,
             quest_counter: 0,
@@ -190,7 +208,7 @@ impl DataReader {
         }
     }
 
-    /// 扫描游戏进程并建立内存连接
+    /// 扫描游戏进程并建立内存连接，通过 connection_state 去重
     fn try_attach_game(&mut self) {
         let mut sys = System::new_all();
         sys.refresh_all();
@@ -198,26 +216,57 @@ impl DataReader {
             let pid = process.pid().as_u32();
             if let Ok(handle) = pid.try_into_process_handle() {
                 if let Some(base) = memory::get_module_base(pid) {
+                    // 从非连接状态首次进入连接
+                    let was_disconnected = self.connection_state != "connected";
+
                     self.handle = Some(handle);
                     self.player_base = base + 0x050139A0;
                     self.monster_base = base + 0x051238C8;
                     self.quest_base = base + 0x0500ED30;
                     self.counterattack_base = base + COUNTERATTACK_BASE_OFFSET;
                     self.game_base = base;
+                    self.pid = Some(pid);
+                    self.module_base = Some(base);
                     self.disconnect_frames = 0;
-                    if !self.connected_logged {
-                        self.logger.info(format!("成功捕获游戏进程! PID: {}, 基址: 0x{:X}", pid, base));
-                        self.connected_logged = true;
+
+                    if was_disconnected {
+                        let event_type = if self.needs_reconnect_event {
+                            self.needs_reconnect_event = false;
+                            ConnectionEventType::Reconnected
+                        } else {
+                            ConnectionEventType::Connected
+                        };
+                        self.connection_logger.log_with(
+                            event_type,
+                            format!("成功捕获游戏进程! PID: {}, 基址: 0x{:X}", pid, base),
+                            Some(pid),
+                            Some(base),
+                        );
+                        self.connection_state = "connected".to_string();
+                        self.was_ever_connected = true;
                     }
-                    self.no_game_printed = false;
                     return;
                 }
             }
         }
-        if !self.no_game_printed {
-            self.logger.info("未检测到游戏进程，等待游戏启动...");
-            self.no_game_printed = true;
+
+        // 未找到进程时，只在状态变化时写一次
+        if self.connection_state == "init" {
+            // 初始状态 → 首次未找到，写一条 Waiting
+            self.connection_logger.log(
+                ConnectionEventType::Waiting,
+                "未检测到游戏进程，等待游戏启动...",
+            );
+            self.connection_state = "waiting".to_string();
+        } else if self.connection_state == "connected" || self.connection_state == "disconnected" {
+            // 从连接/断线状态进入等待
+            self.connection_logger.log(
+                ConnectionEventType::Waiting,
+                "未检测到游戏进程，等待游戏启动...",
+            );
+            self.connection_state = "waiting".to_string();
         }
+        // connection_state == "waiting" 时不做任何事（已去重）
     }
 
     /// 一次数据读取 + 检测（每 50ms 调用一次）
@@ -229,11 +278,36 @@ impl DataReader {
             if memory::read_memory::<u16>(handle, self.game_base).is_none() {
                 self.disconnect_frames += 1;
                 if self.disconnect_frames >= 10 {
-                    self.logger.info("检测到游戏进程已退出，等待重连...");
+                    // 任务中断时输出语义摘要到狩猎日志，然后封口任务状态
+                    if self.prev_quest_state == QuestState::InQuest && self.prev_quest_id > 0 {
+                        self.logger.quest("任务记录中断：游戏连接丢失");
+                        self.logger.separator();
+                        if let Some(ref start) = self.quest_start_time {
+                            let _ = self.logger.save_latest_round(start);
+                        }
+                        self.quest_start_time = None;
+                        self.quest_elapsed_frozen = None;
+                    }
+                    // 封口任务会话，避免重连后继续污染旧 round 或触发重复中断日志
+                    self.prev_quest_state = QuestState::None;
+                    self.prev_quest_id = 0;
+
+                    // 保存断线时的 PID/基址供诊断日志使用，然后清空当前状态
+                    let old_pid = self.pid;
+                    let old_base = self.module_base;
+                    self.connection_logger.log_with(
+                        ConnectionEventType::Disconnected,
+                        "游戏进程退出，等待重连",
+                        old_pid,
+                        old_base,
+                    );
+
                     self.handle = None;
+                    self.pid = None;
+                    self.module_base = None;
+                    self.connection_state = "disconnected".to_string();
+                    self.needs_reconnect_event = true;
                     let now = Instant::now();
-                    self.no_game_printed = false;
-                    self.connected_logged = false;
                     self.action_id_init = false;
                     self.last_action_id = 0;
                     self.last_hp = 0.0;
@@ -261,6 +335,9 @@ impl DataReader {
 
         if let Some(handle) = self.handle {
             data.connected = true;
+            data.connection_state = self.connection_state.clone();
+            data.pid = self.pid;
+            data.module_base = self.module_base;
 
             let player_pos = memory::resolve_pointer(handle, self.player_base, &PLAYER_OFFSETS)
                 .and_then(|addr| memory::read_memory::<memory::Vector3>(handle, addr + 0x390))
@@ -276,6 +353,7 @@ impl DataReader {
                     .unwrap_or((0, 0));
 
             let in_quest = quest_state_raw == 2 && quest_id > 0;
+            data.in_quest = in_quest;
             data.quest_id = quest_id;
             data.quest_name = self.quest_names.get(&quest_id).copied();
 
@@ -600,6 +678,11 @@ impl DataReader {
             }
 
             data.flashing = Instant::now() < self.flash_until;
+        } else {
+            // 未连接时，使用断线/try_attach_game 处理后的最新状态
+            data.connection_state = self.connection_state.clone();
+            data.pid = self.pid;
+            data.module_base = self.module_base;
         }
 
         data
@@ -607,13 +690,16 @@ impl DataReader {
 }
 
 /// 启动后台数据读取线程（20FPS），返回共享雷达数据
-pub fn spawn_data_reader(logger: Logger) -> Arc<Mutex<RadarData>> {
+pub fn spawn_data_reader(
+    logger: Logger,
+    connection_logger: ConnectionLogger,
+) -> Arc<Mutex<RadarData>> {
     let shared = Arc::new(Mutex::new(RadarData::default()));
     let shared_clone = shared.clone();
     let monster_names = load_monster_names();
     let quest_names = load_quest_names();
     thread::spawn(move || {
-        let mut reader = DataReader::new(monster_names, quest_names, logger);
+        let mut reader = DataReader::new(monster_names, quest_names, logger, connection_logger);
         loop {
             thread::sleep(Duration::from_millis(4));
             let data = reader.tick();

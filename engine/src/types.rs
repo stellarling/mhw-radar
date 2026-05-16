@@ -50,6 +50,14 @@ impl Default for Settings {
 #[derive(Default, Clone, Serialize)]
 pub struct RadarData {
     pub connected: bool,
+    /// 连接状态: "init" | "waiting" | "connected" | "disconnected"
+    pub connection_state: String,
+    /// 是否在任务中（基于 quest_state_raw 的精确判断）
+    pub in_quest: bool,
+    /// 游戏进程 PID
+    pub pid: Option<u32>,
+    /// 游戏进程模块基址
+    pub module_base: Option<u64>,
     pub has_monster: bool,
     /// 水平距离（XZ 平面）
     pub dist_h: f32,
@@ -94,4 +102,10 @@ pub struct PanelStatus {
     pub monster_name: Option<&'static str>,
     pub quest_elapsed_ms: Option<u64>,
     pub quest_name: Option<&'static str>,
+    /// 连接状态: "waiting" | "connected" | "disconnected"
+    pub connection_state: String,
+    /// 游戏进程 PID
+    pub pid: Option<u32>,
+    /// 游戏进程模块基址
+    pub module_base: Option<u64>,
 }
