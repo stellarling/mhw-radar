@@ -2,6 +2,8 @@ import { forwardRef, useState, useRef, useCallback, useEffect } from "react";
 import type { LogEntry } from "../types";
 import { LOG_COLORS, HIGHLIGHT_RULES, btnStyle } from "../constants";
 
+const PROGRAMMATIC_SCROLL_SUPPRESS_MS = 700;
+
 const arrowBtnStyle: React.CSSProperties = {
   width: 22,
   height: 22,
@@ -103,14 +105,31 @@ export const LogSection = forwardRef<
   const [pageInput, setPageInput] = useState(String(currentRound + 1));
   const pageInputRef = useRef<HTMLInputElement>(null);
   const prevRoundRef = useRef(currentRound);
+
+  // 用于区分代码触发滚动和用户触发滚动。
   const suppressScrollRef = useRef(false);
+  const suppressScrollTimerRef = useRef<number | null>(null);
+
+  const clearProgrammaticScrollMark = useCallback(() => {
+    suppressScrollRef.current = false;
+
+    if (suppressScrollTimerRef.current != null) {
+      window.clearTimeout(suppressScrollTimerRef.current);
+      suppressScrollTimerRef.current = null;
+    }
+  }, []);
 
   const markProgrammaticScroll = useCallback(() => {
     suppressScrollRef.current = true;
 
-    window.setTimeout(() => {
+    if (suppressScrollTimerRef.current != null) {
+      window.clearTimeout(suppressScrollTimerRef.current);
+    }
+
+    suppressScrollTimerRef.current = window.setTimeout(() => {
       suppressScrollRef.current = false;
-    }, 0);
+      suppressScrollTimerRef.current = null;
+    }, PROGRAMMATIC_SCROLL_SUPPRESS_MS);
   }, []);
 
   const scrollToTop = useCallback(
@@ -135,6 +154,12 @@ export const LogSection = forwardRef<
     [markProgrammaticScroll]
   );
 
+  useEffect(() => {
+    return () => {
+      clearProgrammaticScrollMark();
+    };
+  }, [clearProgrammaticScrollMark]);
+
   // sync pageInput when currentRound changes externally
   useEffect(() => {
     setPageInput(String(currentRound + 1));
@@ -153,32 +178,41 @@ export const LogSection = forwardRef<
     }
   }, [currentRound, autoScroll, scrollToBottom, scrollToTop]);
 
-  // 自动滚动只针对当前页：当前页 entries 更新时，才滚到底部。
+  // 自动滚动只针对当前页：当前页日志条数变化时才滚到底部。
   useEffect(() => {
     if (!autoScroll || entries.length === 0) return;
 
     scrollToBottom("smooth");
-  }, [entries, autoScroll, scrollToBottom]);
+  }, [entries.length, autoScroll, scrollToBottom]);
 
   const handleUserScrollIntent = useCallback(() => {
     if (autoScroll) {
+      clearProgrammaticScrollMark();
       onAutoScrollChange(false);
     }
-  }, [autoScroll, onAutoScrollChange]);
+  }, [autoScroll, clearProgrammaticScrollMark, onAutoScrollChange]);
 
   const handleScroll = useCallback(() => {
-    if (!autoScroll || suppressScrollRef.current) return;
-
     const el = containerRef.current;
     if (!el) return;
 
     const distanceToBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
 
+    if (suppressScrollRef.current) {
+      // 程序滚动已经抵达底部，可以提前解除抑制；否则继续忽略 smooth scroll 过程中的中间 scroll 事件。
+      if (distanceToBottom <= 16) {
+        clearProgrammaticScrollMark();
+      }
+      return;
+    }
+
+    if (!autoScroll) return;
+
     // 用户通过拖动滚动条、键盘、触控板等方式离开底部时，关闭当前页自动滚动。
     if (distanceToBottom > 16) {
       onAutoScrollChange(false);
     }
-  }, [autoScroll, onAutoScrollChange]);
+  }, [autoScroll, clearProgrammaticScrollMark, onAutoScrollChange]);
 
   const handlePageSubmit = useCallback(() => {
     const p = parseInt(pageInput, 10);
