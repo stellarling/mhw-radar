@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { API } from "./constants";
+import { API } from "../constants";
 
 export function useApi<T>(path: string, interval: number) {
   const [data, setData] = useState<T | null>(null);

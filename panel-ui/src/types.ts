@@ -35,6 +35,19 @@ export interface LogResponse {
   total_rounds: number;
 }
 
+export interface UpdateInfo {
+  tag: string;
+  url: string;
+  fileName: string;
+}
+
+export type UpdateStatus = "idle" | "checking" | "available" | "latest" | "downloading" | "error";
+
+export interface GitHubReleaseAsset {
+  name: string;
+  browser_download_url: string;
+}
+
 export type BoolKey =
   | "show_time"
   | "show_monster_name"

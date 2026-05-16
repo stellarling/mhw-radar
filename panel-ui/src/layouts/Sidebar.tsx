@@ -1,5 +1,5 @@
-import { LogoImage } from "./LogoImage";
-import { NavButton } from "./NavButton";
+import { LogoImage } from "../ui/LogoImage";
+import { NavButton } from "../ui/NavButton";
 
 export function Sidebar({
   activeSection,
