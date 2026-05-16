@@ -18,6 +18,7 @@ import { useQuestTimer } from "./hooks/useQuestTimer";
 import { useScrollSpy } from "./hooks/useScrollSpy";
 import { useUpdateChecker } from "./hooks/useUpdateChecker";
 import { useLogExport } from "./hooks/useLogExport";
+import { readApiError } from "./utils/api";
 import type { Settings, LogEntry, LogResponse, BoolKey, PanelStatus } from "./types";
 
 export default function App() {
@@ -32,8 +33,15 @@ export default function App() {
   const { displayTime } = useQuestTimer(status);
   const { activeSection, scrollToSection, mainPanelRef, sectionRefs } = useScrollSpy();
   const {
-    updateInfo, updateStatus, updateError, appVersion, latestVersion,
-    checkForUpdates, openExternal, handleUpdate, setUpdateStatus,
+    updateInfo,
+    updateStatus,
+    updateError,
+    appVersion,
+    latestVersion,
+    checkForUpdates,
+    openExternal,
+    handleUpdate,
+    setUpdateStatus,
   } = useUpdateChecker();
   const { exportCurrentPage, exportAllRounds } = useLogExport(logEntries, currentRound);
 
@@ -107,12 +115,15 @@ export default function App() {
 
   // ── Log clear ──
   const clearLogs = async () => {
-    setLogEntries([]);
-    setCurrentRound(0);
-    setTotalRounds(1);
     try {
       const res = await fetch(`${API}/api/logs/clear`, { method: "POST" });
-      if (!res.ok) throw new Error("clear failed");
+      if (!res.ok) {
+        throw new Error(await readApiError(res));
+      }
+
+      setLogEntries([]);
+      setCurrentRound(0);
+      setTotalRounds(1);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       window.alert(`清除日志失败：${message}`);
