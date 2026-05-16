@@ -4,9 +4,15 @@ import { API } from "../constants";
 import { readApiError } from "../utils/api";
 import type { LogEntry, LogResponse } from "../types";
 
+function beijingDateStr(): string {
+  const now = new Date();
+  const beijing = new Date(now.getTime() + 8 * 60 * 60 * 1000);
+  return beijing.toISOString().slice(0, 10);
+}
+
 export function useLogExport(logEntries: LogEntry[], currentRound: number) {
   const saveLogFile = useCallback(async (text: string, defaultName?: string) => {
-    let defaultPath = defaultName ?? `mhw-radar-${new Date().toISOString().slice(0, 10)}.txt`;
+    let defaultPath = defaultName ?? `mhw-radar-${beijingDateStr()}.txt`;
 
     try {
       const res = await fetch(`${API}/api/desktop-path`);
@@ -43,7 +49,7 @@ export function useLogExport(logEntries: LogEntry[], currentRound: number) {
         .map((e) => `[${e.timestamp}] [${e.level}] ${e.message}`)
         .join("\r\n") + "\r\n";
       const roundLabel = String(currentRound + 1).padStart(3, "0");
-      await saveLogFile(text, `mhw-radar-round-${roundLabel}-${new Date().toISOString().slice(0, 10)}.txt`);
+      await saveLogFile(text, `mhw-radar-round-${roundLabel}-${beijingDateStr()}.txt`);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       window.alert(`导出本页失败：${message}`);
@@ -59,7 +65,7 @@ export function useLogExport(logEntries: LogEntry[], currentRound: number) {
       const text = data.entries
         .map((e) => `[${e.timestamp}] [${e.level}] ${e.message}`)
         .join("\r\n") + "\r\n";
-      await saveLogFile(text, `mhw-radar-all-${new Date().toISOString().slice(0, 10)}.txt`);
+      await saveLogFile(text, `mhw-radar-all-${beijingDateStr()}.txt`);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       window.alert(`导出全部失败：${message}`);
