@@ -24,14 +24,18 @@ import type { Settings, LogEntry, LogResponse, BoolKey, PanelStatus } from "./ty
 export default function App() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const status = useApi<PanelStatus>("/api/status", 1000);
+
   const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
   const [currentRound, setCurrentRound] = useState(0);
   const [totalRounds, setTotalRounds] = useState(0);
-  const logEndRef = useRef<HTMLDivElement>(null);
+  const totalRoundsRef = useRef(0);
+  const logsRequestIdRef = useRef(0);
+
   const [autoScroll, setAutoScroll] = useState(true);
 
   const { displayTime } = useQuestTimer(status);
   const { activeSection, scrollToSection, mainPanelRef, sectionRefs } = useScrollSpy();
+
   const {
     updateInfo,
     updateStatus,
@@ -44,6 +48,7 @@ export default function App() {
     handleUpdate,
     setUpdateStatus,
   } = useUpdateChecker();
+
   const { exportCurrentPage, exportAllRounds } = useLogExport(logEntries, currentRound);
 
   const githubUrl = `https://github.com/${GITHUB_REPO}`;
@@ -58,6 +63,7 @@ export default function App() {
         /* mhw-radar.exe not running */
       }
     };
+
     fetchSettings();
     const id = setInterval(fetchSettings, 2000);
     return () => clearInterval(id);
@@ -65,11 +71,41 @@ export default function App() {
 
   // ── Log polling ──
   const fetchLogs = useCallback(async () => {
+    const requestId = ++logsRequestIdRef.current;
+
     try {
-      const res = await fetch(`${API}/api/logs?round=${currentRound}`);
+      const requestedRound = currentRound;
+      const res = await fetch(`${API}/api/logs?round=${requestedRound}`);
       const data: LogResponse = await res.json();
+
+      if (requestId !== logsRequestIdRef.current) {
+        return;
+      }
+
+      const nextTotalRounds = data.total_rounds;
+      const previousTotalRounds = totalRoundsRef.current;
+      const latestRound = Math.max(0, nextTotalRounds - 1);
+
+      totalRoundsRef.current = nextTotalRounds;
+      setTotalRounds(nextTotalRounds);
+
+      if (nextTotalRounds <= 0) {
+        setCurrentRound(0);
+        setLogEntries([]);
+        return;
+      }
+
+      if (nextTotalRounds > previousTotalRounds && requestedRound !== latestRound) {
+        setCurrentRound(latestRound);
+        return;
+      }
+
+      if (requestedRound > latestRound) {
+        setCurrentRound(latestRound);
+        return;
+      }
+
       setLogEntries(data.entries);
-      setTotalRounds(data.total_rounds);
     } catch {
       /* ignore */
     }
@@ -81,24 +117,13 @@ export default function App() {
     return () => clearInterval(id);
   }, [fetchLogs]);
 
-  // ── Auto-scroll ──
-  useEffect(() => {
-    if (autoScroll && totalRounds > 0) setCurrentRound(totalRounds - 1);
-  }, [autoScroll, totalRounds]);
-
-  useEffect(() => {
-    if (!autoScroll || logEntries.length === 0 || !logEndRef.current) return;
-    const logContainer = logEndRef.current.parentElement as HTMLDivElement | null;
-    if (logContainer) {
-      logContainer.scrollTo({ top: logContainer.scrollHeight, behavior: "smooth" });
-    }
-  }, [logEntries, autoScroll]);
-
   // ── Settings update ──
   const updateSetting = async (patch: Partial<Settings>) => {
     if (!settings) return;
+
     const updated = { ...settings, ...patch };
     setSettings(updated);
+
     try {
       await fetch(`${API}/api/settings`, {
         method: "PUT",
@@ -122,6 +147,8 @@ export default function App() {
         throw new Error(await readApiError(res));
       }
 
+      logsRequestIdRef.current += 1;
+      totalRoundsRef.current = 1;
       setLogEntries([]);
       setCurrentRound(0);
       setTotalRounds(1);
@@ -134,11 +161,13 @@ export default function App() {
   // ── Close window ──
   const closeWindow = async (e: React.MouseEvent) => {
     e.stopPropagation();
+
     try {
       await invoke("kill_engine");
     } catch {
       /* command may not exist in some contexts */
     }
+
     try {
       await getCurrentWindow().destroy();
     } catch {
@@ -165,6 +194,7 @@ export default function App() {
         .drag-region .no-drag,
         .drag-region [data-no-drag] { -webkit-app-region: no-drag; app-region: no-drag; }
       `}</style>
+
       <MainLayout>
         <Sidebar
           activeSection={activeSection}
@@ -189,6 +219,7 @@ export default function App() {
             }}
           >
             <StatusBar status={status} displayTime={displayTime} />
+
             <UpdateBanner
               status={updateStatus}
               updateInfo={updateInfo}
@@ -199,6 +230,7 @@ export default function App() {
               onRetry={checkForUpdates}
               onOpenGithub={openExternal}
             />
+
             <OpacitySection settings={settings} onChange={updateSetting} />
 
             <div ref={sectionRefs.basicTools} id="basic-tools">
@@ -211,7 +243,6 @@ export default function App() {
               style={{ display: "flex", flexDirection: "column" }}
             >
               <LogSection
-                ref={logEndRef}
                 entries={logEntries}
                 totalRounds={totalRounds}
                 currentRound={currentRound}
@@ -225,6 +256,7 @@ export default function App() {
             </div>
 
             <LogAnalysisSection ref={sectionRefs.logAnalysis} />
+
             <SoftwareUpdatesSection
               ref={sectionRefs.softwareUpdates}
               updateStatus={updateStatus}
@@ -237,6 +269,7 @@ export default function App() {
               onUpdate={handleUpdate}
               onOpenGithub={openExternal}
             />
+
             <UsageGuideSection ref={sectionRefs.usageGuide} />
           </div>
         </div>

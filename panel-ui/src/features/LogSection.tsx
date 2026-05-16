@@ -21,75 +21,208 @@ const arrowBtnStyle: React.CSSProperties = {
   padding: 0,
 };
 
-function ToggleSwitch({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label: string }) {
+function ToggleSwitch({
+  checked,
+  onChange,
+  label,
+}: {
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  label: string;
+}) {
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", userSelect: "none" }}
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        cursor: "pointer",
+        userSelect: "none",
+      }}
       onClick={() => onChange(!checked)}
     >
-      <div style={{
-        width: 38, height: 20, borderRadius: 10, flexShrink: 0,
-        background: checked ? "linear-gradient(#BFA76B, #6C552D)" : "#444444",
-        position: "relative",
-        border: "1px solid #666",
-        transition: "background 0.1s",
-      }}>
-        <div style={{
-          width: 16, height: 16, borderRadius: "50%", background: "#fff",
-          position: "absolute", top: 1,
-          left: checked ? 20 : 2, transition: "left 0.1s",
-        }} />
+      <div
+        style={{
+          width: 38,
+          height: 20,
+          borderRadius: 10,
+          flexShrink: 0,
+          background: checked ? "linear-gradient(#BFA76B, #6C552D)" : "#444444",
+          position: "relative",
+          border: "1px solid #666",
+          transition: "background 0.1s",
+        }}
+      >
+        <div
+          style={{
+            width: 16,
+            height: 16,
+            borderRadius: "50%",
+            background: "#fff",
+            position: "absolute",
+            top: 1,
+            left: checked ? 20 : 2,
+            transition: "left 0.1s",
+          }}
+        />
       </div>
+
       <span style={{ color: "#b0b0b0", fontSize: 13 }}>{label}</span>
     </div>
   );
 }
 
-export const LogSection = forwardRef<HTMLDivElement, {
-  entries: LogEntry[];
-  totalRounds: number;
-  currentRound: number;
-  autoScroll: boolean;
-  onAutoScrollChange: (v: boolean) => void;
-  onPageChange: (page: number) => void;
-  onClear: () => void;
-  onExportCurrent: () => void;
-  onExportAll: () => void;
-}>(function LogSection(
-  { entries, totalRounds, currentRound, autoScroll, onAutoScrollChange, onPageChange, onClear, onExportCurrent, onExportAll },
+export const LogSection = forwardRef<
+  HTMLDivElement,
+  {
+    entries: LogEntry[];
+    totalRounds: number;
+    currentRound: number;
+    autoScroll: boolean;
+    onAutoScrollChange: (v: boolean) => void;
+    onPageChange: (page: number) => void;
+    onClear: () => void;
+    onExportCurrent: () => void;
+    onExportAll: () => void;
+  }
+>(function LogSection(
+  {
+    entries,
+    totalRounds,
+    currentRound,
+    autoScroll,
+    onAutoScrollChange,
+    onPageChange,
+    onClear,
+    onExportCurrent,
+    onExportAll,
+  },
   logEndRef
 ) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [pageInput, setPageInput] = useState(String(currentRound + 1));
   const pageInputRef = useRef<HTMLInputElement>(null);
   const prevRoundRef = useRef(currentRound);
+  const suppressScrollRef = useRef(false);
+
+  const markProgrammaticScroll = useCallback(() => {
+    suppressScrollRef.current = true;
+
+    window.setTimeout(() => {
+      suppressScrollRef.current = false;
+    }, 0);
+  }, []);
+
+  const scrollToTop = useCallback(
+    (behavior: ScrollBehavior = "auto") => {
+      const el = containerRef.current;
+      if (!el) return;
+
+      markProgrammaticScroll();
+      el.scrollTo({ top: 0, behavior });
+    },
+    [markProgrammaticScroll]
+  );
+
+  const scrollToBottom = useCallback(
+    (behavior: ScrollBehavior = "smooth") => {
+      const el = containerRef.current;
+      if (!el) return;
+
+      markProgrammaticScroll();
+      el.scrollTo({ top: el.scrollHeight, behavior });
+    },
+    [markProgrammaticScroll]
+  );
 
   // sync pageInput when currentRound changes externally
   useEffect(() => {
     setPageInput(String(currentRound + 1));
   }, [currentRound]);
 
-  // 切换页时滚动到顶部
+  // 切换页只处理当前页内部滚动位置，不再参与“是否跳最新页”的判断。
   useEffect(() => {
-    if (prevRoundRef.current !== currentRound && containerRef.current) {
-      containerRef.current.scrollTo({ top: 0, behavior: "auto" });
-      prevRoundRef.current = currentRound;
+    if (prevRoundRef.current === currentRound) return;
+
+    prevRoundRef.current = currentRound;
+
+    if (autoScroll) {
+      scrollToBottom("auto");
+    } else {
+      scrollToTop("auto");
     }
-  }, [currentRound]);
+  }, [currentRound, autoScroll, scrollToBottom, scrollToTop]);
+
+  // 自动滚动只针对当前页：当前页 entries 更新时，才滚到底部。
+  useEffect(() => {
+    if (!autoScroll || entries.length === 0) return;
+
+    scrollToBottom("smooth");
+  }, [entries, autoScroll, scrollToBottom]);
+
+  const handleUserScrollIntent = useCallback(() => {
+    if (autoScroll) {
+      onAutoScrollChange(false);
+    }
+  }, [autoScroll, onAutoScrollChange]);
+
+  const handleScroll = useCallback(() => {
+    if (!autoScroll || suppressScrollRef.current) return;
+
+    const el = containerRef.current;
+    if (!el) return;
+
+    const distanceToBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+
+    // 用户通过拖动滚动条、键盘、触控板等方式离开底部时，关闭当前页自动滚动。
+    if (distanceToBottom > 16) {
+      onAutoScrollChange(false);
+    }
+  }, [autoScroll, onAutoScrollChange]);
 
   const handlePageSubmit = useCallback(() => {
     const p = parseInt(pageInput, 10);
-    if (!isNaN(p) && p >= 1 && p <= totalRounds) {
+
+    if (!Number.isNaN(p) && p >= 1 && p <= totalRounds) {
       onPageChange(p - 1);
     } else {
       setPageInput(String(currentRound + 1));
     }
   }, [pageInput, totalRounds, currentRound, onPageChange]);
 
+  const goPrevPage = useCallback(() => {
+    if (currentRound > 0) {
+      onPageChange(currentRound - 1);
+    }
+  }, [currentRound, onPageChange]);
+
+  const goNextPage = useCallback(() => {
+    if (currentRound < totalRounds - 1) {
+      onPageChange(currentRound + 1);
+    }
+  }, [currentRound, totalRounds, onPageChange]);
+
   return (
-    <div id="hunting-log" style={{ display: "flex", flexDirection: "column", padding: "16px 20px" }}>
+    <div
+      id="hunting-log"
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        padding: "16px 20px",
+      }}
+    >
       {/* ── 标题行 ── */}
-      <div style={{ display: "flex", alignItems: "center", marginBottom: 10, flexWrap: "wrap", gap: 6 }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          marginBottom: 10,
+          flexWrap: "wrap",
+          gap: 6,
+        }}
+      >
         <h2 style={{ color: "#dcdcdc", fontSize: 16, margin: 0 }}>狩猎日志</h2>
+
         <span style={{ color: "#b0b0b0", fontSize: 12, marginLeft: 4 }}>
           {entries.length} 条 / {totalRounds} 轮
         </span>
@@ -97,40 +230,67 @@ export const LogSection = forwardRef<HTMLDivElement, {
         {/* 分页导航（跟随标题） */}
         <div style={{ display: "flex", alignItems: "center", gap: 3, marginLeft: 8 }}>
           <button
-            style={arrowBtnStyle}
+            style={{
+              ...arrowBtnStyle,
+              opacity: currentRound <= 0 ? 0.45 : 1,
+              cursor: currentRound <= 0 ? "not-allowed" : "pointer",
+            }}
             disabled={currentRound <= 0}
-            onClick={() => onPageChange(currentRound - 1)}
+            onClick={goPrevPage}
             title="上一页"
-          >◀</button>
+          >
+            ◀
+          </button>
 
-          <div style={{
-            display: "flex", alignItems: "center", gap: 2,
-            color: "#b0b0b0", fontSize: 13, userSelect: "none",
-          }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 2,
+              color: "#b0b0b0",
+              fontSize: 13,
+              userSelect: "none",
+            }}
+          >
             <input
               ref={pageInputRef}
               value={pageInput}
               onChange={(e) => setPageInput(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") handlePageSubmit(); }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handlePageSubmit();
+              }}
               onBlur={handlePageSubmit}
               style={{
-                width: 32, textAlign: "center",
-                background: "#1a0f08", border: "1px solid #443322", borderRadius: 3,
-                color: "#dcdcdc", fontSize: 13, padding: "2px 0", outline: "none",
+                width: 32,
+                textAlign: "center",
+                background: "#1a0f08",
+                border: "1px solid #443322",
+                borderRadius: 3,
+                color: "#dcdcdc",
+                fontSize: 13,
+                padding: "2px 0",
+                outline: "none",
               }}
             />
+
             <span style={{ color: "#b0b0b0" }}>/ {totalRounds}</span>
           </div>
 
           <button
-            style={arrowBtnStyle}
+            style={{
+              ...arrowBtnStyle,
+              opacity: currentRound >= totalRounds - 1 ? 0.45 : 1,
+              cursor: currentRound >= totalRounds - 1 ? "not-allowed" : "pointer",
+            }}
             disabled={currentRound >= totalRounds - 1}
-            onClick={() => onPageChange(currentRound + 1)}
+            onClick={goNextPage}
             title="下一页"
-          >▶</button>
+          >
+            ▶
+          </button>
         </div>
 
-        {/* 自动滚动（右顶格） */}
+        {/* 自动滚动只控制当前页内部滚动 */}
         <div style={{ marginLeft: "auto" }}>
           <ToggleSwitch checked={autoScroll} onChange={onAutoScrollChange} label="自动滚动" />
         </div>
@@ -152,41 +312,73 @@ export const LogSection = forwardRef<HTMLDivElement, {
           padding: 10,
           background: "rgba(0,0,0,0.25)",
         }}
-        onWheel={() => onAutoScrollChange(false)}
+        onWheel={handleUserScrollIntent}
+        onTouchMove={handleUserScrollIntent}
+        onScroll={handleScroll}
       >
         {entries.length === 0 ? (
-          <div style={{ color: "#555", fontStyle: "italic", marginTop: 20, textAlign: "center" }}>
+          <div
+            style={{
+              color: "#555",
+              fontStyle: "italic",
+              marginTop: 20,
+              textAlign: "center",
+            }}
+          >
             等待游戏数据...
           </div>
         ) : (
           entries.map((entry, i) => {
             const highlight = HIGHLIGHT_RULES.find((r) => r.match(entry));
             const baseColor = LOG_COLORS[entry.level] ?? "#dcdcdc";
+
             return (
-              <div key={i} style={{
-                backgroundColor: highlight?.style.backgroundColor ?? "transparent",
-                color: highlight?.style.color ?? baseColor,
-                paddingLeft: 4,
-                borderRadius: 2,
-              }}>
+              <div
+                key={i}
+                style={{
+                  backgroundColor: highlight?.style.backgroundColor ?? "transparent",
+                  color: highlight?.style.color ?? baseColor,
+                  paddingLeft: 4,
+                  borderRadius: 2,
+                }}
+              >
                 <span style={{ color: "#8c8c8c" }}>{entry.timestamp}</span>{" "}
                 <span>{entry.message}</span>
               </div>
             );
           })
         )}
+
         <div ref={logEndRef} />
       </div>
 
       {/* ── 底部按钮行 ── */}
-      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 10 }}>
-        <button onClick={onClear} style={btnStyle}>清除日志</button>
-        <button onClick={onExportAll} style={btnStyle}>导出全部</button>
-        <button onClick={onExportCurrent} style={{
-          ...btnStyle,
-          background: "#4a2a15",
-          color: "#f0d8b0",
-        }}>导出本页</button>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "flex-end",
+          gap: 8,
+          marginTop: 10,
+        }}
+      >
+        <button onClick={onClear} style={btnStyle}>
+          清除日志
+        </button>
+
+        <button onClick={onExportAll} style={btnStyle}>
+          导出全部
+        </button>
+
+        <button
+          onClick={onExportCurrent}
+          style={{
+            ...btnStyle,
+            background: "#4a2a15",
+            color: "#f0d8b0",
+          }}
+        >
+          导出本页
+        </button>
       </div>
     </div>
   );
