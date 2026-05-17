@@ -249,6 +249,13 @@ export const LogSection = forwardRef<
   });
 
   const [hoveredFilter, setHoveredFilter] = useState<string | null>(null);
+  const [bottomHovered, setBottomHovered] = useState<string | null>(null);
+
+  const bottomBtnStyle = (name: string): React.CSSProperties => ({
+    ...btnStyle,
+    background: bottomHovered === name ? "#4a2a15" : "#331e12",
+    color: bottomHovered === name ? "#f0d8b0" : "#dcdcdc",
+  });
 
   const filterOptions = [
     { value: "all" as const, label: "全部显示" },
@@ -443,24 +450,32 @@ export const LogSection = forwardRef<
           marginTop: 10,
         }}
       >
-        <span style={{ color: "#8c8c8c", fontSize: 12, userSelect: "none", marginRight: "auto" }}>
+        <span style={{ color: "#8c8c8c", fontSize: 14, userSelect: "none", marginRight: "auto" }}>
           (注：每场狩猎的日志独立成页)
         </span>
-        <button onClick={onClear} style={btnStyle}>
+        <button
+          onClick={onClear}
+          style={bottomBtnStyle("clear")}
+          onMouseEnter={() => setBottomHovered("clear")}
+          onMouseLeave={() => setBottomHovered(null)}
+        >
           清除日志
         </button>
 
-        <button onClick={onExportAll} style={btnStyle}>
+        <button
+          onClick={onExportAll}
+          style={bottomBtnStyle("exportAll")}
+          onMouseEnter={() => setBottomHovered("exportAll")}
+          onMouseLeave={() => setBottomHovered(null)}
+        >
           导出全部
         </button>
 
         <button
           onClick={onExportCurrent}
-          style={{
-            ...btnStyle,
-            background: "#4a2a15",
-            color: "#f0d8b0",
-          }}
+          style={bottomBtnStyle("exportCurrent")}
+          onMouseEnter={() => setBottomHovered("exportCurrent")}
+          onMouseLeave={() => setBottomHovered(null)}
         >
           导出本页
         </button>
