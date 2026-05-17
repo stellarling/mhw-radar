@@ -503,16 +503,56 @@ impl DataReader {
                 // ── 怪物AI决策值读取（地址配置自 monster_ai_addresses.json）──
                 let ai_config = self.monster_ai_configs.get(&monster_id);
                 let ai_decision = ai_config.and_then(|config| {
-                    memory::resolve_pointer(handle, self.game_base + config.base_offset, &config.pointer_offsets)
-                        .and_then(|addr| {
-                            Some((
-                                memory::read_memory::<f32>(handle, addr + config.dist_field_offset)?,
-                                memory::read_memory::<f32>(handle, addr + config.angle_field_offset)?,
-                            ))
-                        })
+                    memory::resolve_pointer(
+                        handle,
+                        self.game_base + config.base_offset,
+                        &config.pointer_offsets,
+                    )
+                    .and_then(|addr| {
+                        Some((
+                            memory::read_memory::<f32>(handle, addr + config.dist_field_offset)?,
+                            memory::read_memory::<f32>(handle, addr + config.angle_field_offset)?,
+                        ))
+                    })
                 });
                 data.ai_dist = ai_decision.map(|(d, _)| d);
                 data.ai_angle = ai_decision.map(|(_, a)| a);
+
+                // 招式名称
+                data.action_name = lookup_action_name(monster_id, action_id);
+
+                // ── 黑龙下压值快照 ─────────────────────────────────────────────
+                let counterattack_snapshot = if monster_id == 101 {
+                    if action_id == 179 {
+                        self.counterattack_scaled = true;
+                    }
+
+                    let value = memory::resolve_pointer(
+                        handle,
+                        self.counterattack_base,
+                        &COUNTERATTACK_OFFSETS,
+                    )
+                    .and_then(|addr| memory::read_memory::<f32>(handle, addr))
+                    .map(|v| {
+                        if self.counterattack_scaled {
+                            v / 0.7
+                        } else {
+                            v
+                        }
+                    });
+
+                    data.counterattack_value = value;
+                    data.counterattack_scaled = self.counterattack_scaled;
+
+                    value
+                } else {
+                    // 非黑龙时显式清空，避免共享数据里残留上一只黑龙的下压值。
+                    self.counterattack_scaled = false;
+                    data.counterattack_value = None;
+                    data.counterattack_scaled = false;
+
+                    None
+                };
 
                 // 怪物血量
                 if let Some(addr) = monster_addr {
@@ -532,31 +572,38 @@ impl DataReader {
                                             .unwrap_or_else(|| "??".to_string());
                                         let pct = cur_hp / max_hp * 100.0;
                                         let delta = self.last_hp - cur_hp;
+
+                                        let counterattack_text = if monster_id == 101 {
+                                            counterattack_snapshot
+                                                .map(|value| {
+                                                    if self.counterattack_scaled {
+                                                        format!(" 下压值(换算):{:.0}", value)
+                                                    } else {
+                                                        format!(" 下压值:{:.0}", value)
+                                                    }
+                                                })
+                                                .unwrap_or_else(|| " 下压值:??".to_string())
+                                        } else {
+                                            String::new()
+                                        };
+
                                         self.logger.combat(format!(
-                                            "[{}] 玩家攻击命中! 距离:{:.0} 角度:{:.1}° 血量:{:.0} ({:.1}%) 变化:-{:.0}",
-                                            elapsed_str, data.dist_h, data.angle, cur_hp, pct, delta
+                                            "[{}] 玩家攻击命中! 距离:{:.0} 角度:{:.1}° 血量:{:.0} ({:.1}%) 变化:-{:.0}{}",
+                                            elapsed_str,
+                                            data.dist_h,
+                                            data.angle,
+                                            cur_hp,
+                                            pct,
+                                            delta,
+                                            counterattack_text
                                         ));
                                     }
+
                                     self.last_hp = cur_hp;
                                 }
                             }
                         }
                     }
-                }
-
-                // 黑龙下压值
-                if monster_id == 101 {
-                    data.counterattack_value = memory::resolve_pointer(handle, self.counterattack_base, &COUNTERATTACK_OFFSETS)
-                        .and_then(|addr| memory::read_memory::<f32>(handle, addr))
-                        .map(|v| if self.counterattack_scaled { v / 0.7 } else { v });
-                    data.counterattack_scaled = self.counterattack_scaled;
-                }
-
-                // 招式名称
-                data.action_name = lookup_action_name(monster_id, action_id);
-
-                if monster_id == 101 && action_id == 179 {
-                    self.counterattack_scaled = true;
                 }
 
                 if data.action_name.is_none() {
