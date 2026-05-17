@@ -10,7 +10,7 @@ export const SectionWrapper = forwardRef<HTMLDivElement, {
       ref={ref}
       id={id}
       style={{
-        padding: "16px 20px",
+        padding: "16px 16px",
         borderTop: "1px solid #331e12",
         display: "flex",
         flexDirection: "column",

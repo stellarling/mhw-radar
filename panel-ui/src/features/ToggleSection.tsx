@@ -9,10 +9,10 @@ export function ToggleSection({
   onToggle: (key: BoolKey, value: boolean) => void;
 }) {
   return (
-    <div id="basic-tools" style={{ padding: "16px 20px", borderBottom: "1px solid #331e12" }}>
+    <div id="basic-tools" style={{ padding: "16px 16px", borderBottom: "1px solid #331e12" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 10 }}>
         <h2 style={{ color: "#dcdcdc", fontSize: 16, margin: 0 }}>显示开关</h2>
-        <span style={{ color: "#b0b0b0", fontSize: 12 }}>隐藏/显示: Ctrl+Shift+U</span>
+        <span style={{ color: "#dcdcdc", fontSize: 12 }}>隐藏/显示: Ctrl+Shift+U</span>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "2px 24px" }}>
         {TOGGLES.map(({ key, label }) => (
@@ -41,7 +41,7 @@ function ToggleRow({ label, checked, onChange }: { label: string; checked: boole
           left: checked ? 20 : 2, transition: "left 0.1s",
         }} />
       </div>
-      <span style={{ color: "#dcdcdc", fontSize: 15, marginLeft: 10, userSelect: "none" }}>{label}</span>
+      <span style={{ color: "#dcdcdc", fontSize: 16, marginLeft: 10, userSelect: "none" }}>{label}</span>
     </div>
   );
 }

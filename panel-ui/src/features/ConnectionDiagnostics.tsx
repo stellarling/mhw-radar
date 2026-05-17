@@ -31,7 +31,7 @@ export function ConnectionDiagnostics({
         border: "1px solid #331e12",
         borderRadius: 4,
         background: "rgba(0,0,0,0.15)",
-        margin: "12px 20px",
+        margin: "12px 16px",
         overflow: "hidden",
       }}
     >
@@ -45,7 +45,7 @@ export function ConnectionDiagnostics({
           gap: 8,
         }}
       >
-        <span style={{ color: "#b0b0b0", fontSize: 13, fontWeight: 600, flexShrink: 0 }}>
+        <span style={{ color: "#dcdcdc", fontSize: 14, fontWeight: 600, flexShrink: 0 }}>
           连接诊断
         </span>
 
@@ -62,13 +62,13 @@ export function ConnectionDiagnostics({
             }}
           >
             <span style={{ color: "#8c8c8c" }}>{latest.timestamp}</span>{" "}
-            <span style={{ fontSize: 11, opacity: 0.8, marginRight: 2 }}>
+            <span style={{ fontSize: 12, opacity: 0.8, marginRight: 2 }}>
               [{EVENT_LABELS[latest.event_type] ?? latest.event_type}]
             </span>
             <span>{latest.message}</span>
           </span>
         ) : (
-          <span style={{ color: "#555", fontSize: 12, fontStyle: "italic" }}>
+          <span style={{ color: "#8c8c8c", fontSize: 12, fontStyle: "italic" }}>
             暂无连接事件
           </span>
         )}

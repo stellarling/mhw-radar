@@ -138,11 +138,11 @@ impl eframe::App for RadarApp {
                 let win_w = 280.0;
 
                 let rect_height = if !data.connected {
-                    60.0
+                    82.0
                 } else if data.has_monster {
                     calc_overlay_height(&settings, data.monster_id)
                 } else {
-                    60.0
+                    82.0
                 };
 
                 let alpha = (settings.window_opacity * 255.0) as u8;
@@ -312,17 +312,8 @@ impl eframe::App for RadarApp {
                             egui::FontId::proportional(16.0),
                             tc(egui::Color32::from_rgb(144, 238, 144)),
                         );
-
-                        y += 22.0;
                     }
 
-                    painter.text(
-                        egui::pos2(10.0, y),
-                        egui::Align2::LEFT_TOP,
-                        "隐藏/显示: Ctrl+Shift+U",
-                        egui::FontId::proportional(13.0),
-                        tc(egui::Color32::LIGHT_GRAY),
-                    );
                 } else {
                     ui.painter().text(
                         egui::pos2(10.0, 14.0),
@@ -333,6 +324,15 @@ impl eframe::App for RadarApp {
                     );
                 }
 
+                // 快捷键提示（始终显示）
+                ui.painter().text(
+                    egui::pos2(10.0, rect_height - 22.0),
+                    egui::Align2::LEFT_TOP,
+                    "隐藏/显示: Ctrl+Shift+U",
+                    egui::FontId::proportional(13.0),
+                    tc(egui::Color32::LIGHT_GRAY),
+                );
+
                 if data.flashing {
                     ui.painter()
                         .rect_filled(overlay_rect, 6.0, egui::Color32::from_white_alpha(70));
@@ -341,11 +341,11 @@ impl eframe::App for RadarApp {
 
         // 自动调整高度
         let new_height = if !data.connected {
-            60.0
+            82.0
         } else if data.has_monster {
             calc_overlay_height(&settings, data.monster_id)
         } else {
-            60.0
+            82.0
         };
 
         if new_height != self.last_inner_height {

@@ -20,14 +20,14 @@ export const LogAnalysisSection = forwardRef<HTMLDivElement, Record<string, unkn
         {FEATURES.map((item) => (
           <Card key={item.label}>
             <div style={{ color: "#bfa76b", fontSize: 14, marginBottom: 6 }}>{item.label}</div>
-            <div style={{ color: "#6c6c6c", fontSize: 12 }}>{item.desc}</div>
+            <div style={{ color: "#8c8c8c", fontSize: 12 }}>{item.desc}</div>
             <div
               style={{
                 display: "inline-block",
                 marginTop: 8,
                 padding: "2px 8px",
                 borderRadius: 3,
-                fontSize: 11,
+                fontSize: 12,
                 color: "#8c8c8c",
                 border: "1px solid #555",
               }}

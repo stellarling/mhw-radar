@@ -26,11 +26,11 @@ export function UpdateBanner({
     return (
       <div style={{
         display: "flex", alignItems: "center", gap: 10,
-        padding: "8px 20px",
+        padding: "8px 16px",
         background: "rgba(191,167,107,0.12)",
         borderBottom: "1px solid #bfa76b",
       }}>
-        <span style={{ color: "#bfa76b", fontSize: 13, fontWeight: 500 }}>
+        <span style={{ color: "#bfa76b", fontSize: 14, fontWeight: 500 }}>
           发现新版本 {updateInfo.tag}
         </span>
         <button onClick={onUpdate} style={btnStyle}>立即更新</button>
@@ -46,11 +46,11 @@ export function UpdateBanner({
     return (
       <div style={{
         display: "flex", alignItems: "center", gap: 8,
-        padding: "8px 20px",
+        padding: "8px 16px",
         background: "rgba(191,167,107,0.08)",
         borderBottom: "1px solid #331e12",
       }}>
-        <span style={{ color: "#b0b0b0", fontSize: 13 }}>
+        <span style={{ color: "#dcdcdc", fontSize: 13 }}>
           {downloadProgress?.message || "正在下载更新包..."}
           {downloadProgress ? ` · ${formatProgress(downloadProgress)}` : ""}
         </span>
@@ -62,11 +62,11 @@ export function UpdateBanner({
     return (
       <div style={{
         display: "flex", alignItems: "center", gap: 8,
-        padding: "8px 20px",
+        padding: "8px 16px",
         background: "rgba(191,167,107,0.08)",
         borderBottom: "1px solid #331e12",
       }}>
-        <span style={{ color: "#b0b0b0", fontSize: 13 }}>
+        <span style={{ color: "#dcdcdc", fontSize: 13 }}>
           更新包已下载，正在启动安装脚本...
         </span>
       </div>
@@ -77,7 +77,7 @@ export function UpdateBanner({
     return (
       <div style={{
         display: "flex", alignItems: "center", gap: 10,
-        padding: "8px 20px",
+        padding: "8px 16px",
         background: "rgba(244,67,54,0.1)",
         borderBottom: "1px solid #f44336",
       }}>

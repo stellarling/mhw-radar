@@ -9,8 +9,8 @@ export const UsageGuideSection = forwardRef<HTMLDivElement, Record<string, unkno
       <SectionHeader title="使用说明" description="关于本软件与相关声明" />
 
       <Card style={{ marginBottom: 16 }}>
-        <div style={{ color: "#bfa76b", fontSize: 15, marginBottom: 8 }}>关于本软件</div>
-        <div style={{ color: "#d0d0d0", fontSize: 14, lineHeight: 1.8 }}>
+        <div style={{ color: "#bfa76b", fontSize: 16, marginBottom: 8 }}>关于本软件</div>
+        <div style={{ color: "#dcdcdc", fontSize: 14, lineHeight: 1.8 }}>
           <div style={{ marginBottom: 10 }}>
             MHW Radar 是一款为《怪物猎人：世界》玩家打造的实时狩猎辅助工具。
             目前还在早期的开发阶段，请谨慎使用。
@@ -31,7 +31,7 @@ export const UsageGuideSection = forwardRef<HTMLDivElement, Record<string, unkno
       </Card>
 
       <Card style={{ background: "rgba(0,0,0,0.08)" }}>
-        <div style={{ color: "#b0b0b0", fontSize: 13, lineHeight: 2 }}>
+        <div style={{ color: "#dcdcdc", fontSize: 14, lineHeight: 2 }}>
           本工具为开源免费软件，仅供学习交流使用，禁止用于商业用途。<br />
           所有游戏相关数据、美术素材及商标版权均归属 CAPCOM CO., LTD.<br />
           《怪物猎人：世界》《怪物猎人：世界·冰原》© CAPCOM CO., LTD. ALL RIGHTS RESERVED.<br />

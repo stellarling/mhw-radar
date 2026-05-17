@@ -34,6 +34,7 @@ export default function App() {
 
   const [connectionLogs, setConnectionLogs] = useState<ConnectionLogEntry[]>([]);
   const [autoScroll, setAutoScroll] = useState(true);
+  const [logFilter, setLogFilter] = useState<"all" | "combat" | "action" | "highlight">("all");
 
   const { displayTime } = useQuestTimer(status);
   const { activeSection, scrollToSection, mainPanelRef, sectionRefs } = useScrollSpy();
@@ -265,13 +266,15 @@ export default function App() {
               id="hunting-log"
               style={{ display: "flex", flexDirection: "column" }}
             >
-              <div style={{ height: 1, background: "#331e12", margin: "0 20px" }} />
+              <div style={{ height: 1, background: "#331e12", margin: "0 16px" }} />
               <LogSection
                 entries={logEntries}
                 totalRounds={totalRounds}
                 currentRound={currentRound}
                 autoScroll={autoScroll}
+                logFilter={logFilter}
                 onAutoScrollChange={setAutoScroll}
+                onFilterChange={setLogFilter}
                 onPageChange={setCurrentRound}
                 onClear={clearLogs}
                 onExportCurrent={exportCurrentPage}

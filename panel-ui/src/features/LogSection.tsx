@@ -14,7 +14,7 @@ const arrowBtnStyle: React.CSSProperties = {
   alignItems: "center",
   justifyContent: "center",
   cursor: "pointer",
-  fontSize: 11,
+  fontSize: 12,
   userSelect: "none",
   lineHeight: 1,
   flexShrink: 0,
@@ -69,7 +69,7 @@ function ToggleSwitch({
         />
       </div>
 
-      <span style={{ color: "#b0b0b0", fontSize: 13 }}>{label}</span>
+      <span style={{ color: "#dcdcdc", fontSize: 13 }}>{label}</span>
     </div>
   );
 }
@@ -81,7 +81,9 @@ export const LogSection = forwardRef<
     totalRounds: number;
     currentRound: number;
     autoScroll: boolean;
+    logFilter: "all" | "combat" | "action" | "highlight";
     onAutoScrollChange: (v: boolean) => void;
+    onFilterChange: (v: "all" | "combat" | "action" | "highlight") => void;
     onPageChange: (page: number) => void;
     onClear: () => void;
     onExportCurrent: () => void;
@@ -93,7 +95,9 @@ export const LogSection = forwardRef<
     totalRounds,
     currentRound,
     autoScroll,
+    logFilter,
     onAutoScrollChange,
+    onFilterChange,
     onPageChange,
     onClear,
     onExportCurrent,
@@ -236,12 +240,35 @@ export const LogSection = forwardRef<
     }
   }, [currentRound, totalRounds, onPageChange]);
 
+  const filteredEntries = entries.filter((e) => {
+    if (logFilter === "all") return true;
+    if (logFilter === "combat") return e.level === "Combat";
+    if (logFilter === "action") return e.action_id != null;
+    if (logFilter === "highlight") return HIGHLIGHT_RULES.some((r) => r.match(e));
+    return true;
+  });
+
+  const [hoveredFilter, setHoveredFilter] = useState<string | null>(null);
+
+  const filterOptions = [
+    { value: "all" as const, label: "全部显示" },
+    { value: "combat" as const, label: "仅伤害记录" },
+    { value: "action" as const, label: "仅出招记录" },
+    { value: "highlight" as const, label: "仅关键信息" },
+  ];
+
+  const filterBtnStyle = (value: string): React.CSSProperties => ({
+    ...btnStyle,
+    background: logFilter === value ? "#5c3a1e" : hoveredFilter === value ? "#4a2a15" : "#331e12",
+    color: logFilter === value ? "#ffddaa" : hoveredFilter === value ? "#f0d8b0" : "#dcdcdc",
+  });
+
   return (
     <div
       style={{
         display: "flex",
         flexDirection: "column",
-        padding: "16px 20px",
+        padding: "16px 16px",
       }}
     >
       {/* ── 标题行 ── */}
@@ -256,8 +283,8 @@ export const LogSection = forwardRef<
       >
         <h2 style={{ color: "#dcdcdc", fontSize: 16, margin: 0 }}>狩猎日志</h2>
 
-        <span style={{ color: "#b0b0b0", fontSize: 12, marginLeft: 4 }}>
-          {entries.length} 条 / {totalRounds} 轮
+        <span style={{ color: "#dcdcdc", fontSize: 12, marginLeft: 4 }}>
+          {filteredEntries.length} 条 / {totalRounds} 轮
         </span>
 
         {/* 分页导航（跟随标题，totalRounds=0 时隐藏） */}
@@ -281,8 +308,8 @@ export const LogSection = forwardRef<
                 display: "flex",
                 alignItems: "center",
                 gap: 2,
-                color: "#b0b0b0",
-                fontSize: 13,
+                color: "#dcdcdc",
+                fontSize: 14,
                 userSelect: "none",
               }}
             >
@@ -301,13 +328,13 @@ export const LogSection = forwardRef<
                   border: "1px solid #443322",
                   borderRadius: 3,
                   color: "#dcdcdc",
-                  fontSize: 13,
+                  fontSize: 14,
                   padding: "2px 0",
                   outline: "none",
                 }}
               />
 
-              <span style={{ color: "#b0b0b0" }}>/ {totalRounds}</span>
+              <span style={{ color: "#dcdcdc" }}>/ {totalRounds}</span>
             </div>
 
             <button
@@ -324,6 +351,21 @@ export const LogSection = forwardRef<
             </button>
           </div>
         )}
+
+        {/* 筛选按钮 */}
+        <div style={{ display: "flex", gap: 8, marginLeft: 8 }}>
+          {filterOptions.map((opt) => (
+            <button
+              key={opt.value}
+              onClick={() => onFilterChange(opt.value)}
+              onMouseEnter={() => setHoveredFilter(opt.value)}
+              onMouseLeave={() => setHoveredFilter(null)}
+              style={filterBtnStyle(opt.value)}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
 
         {/* 自动滚动只控制当前页内部滚动 */}
         <div style={{ marginLeft: "auto" }}>
@@ -344,26 +386,30 @@ export const LogSection = forwardRef<
           lineHeight: 1.7,
           border: "1px solid #331e12",
           borderRadius: 4,
-          padding: 10,
+          padding: 8,
           background: "rgba(0,0,0,0.25)",
         }}
         onWheel={handleUserScrollIntent}
         onTouchMove={handleUserScrollIntent}
         onScroll={handleScroll}
       >
-        {entries.length === 0 ? (
+        {filteredEntries.length === 0 ? (
           <div
             style={{
-              color: "#555",
+              color: "#8c8c8c",
               fontStyle: "italic",
               marginTop: 20,
               textAlign: "center",
             }}
           >
-            {totalRounds <= 0 ? "暂无狩猎记录" : "等待游戏数据..."}
+            {entries.length === 0
+              ? totalRounds <= 0
+                ? "暂无狩猎记录"
+                : "等待游戏数据..."
+              : "当前筛选条件下无匹配记录"}
           </div>
         ) : (
-          entries.map((entry, i) => {
+          filteredEntries.map((entry, i) => {
             const highlight = HIGHLIGHT_RULES.find((r) => r.match(entry));
             const baseColor = LOG_COLORS[entry.level] ?? "#dcdcdc";
 
@@ -392,10 +438,14 @@ export const LogSection = forwardRef<
         style={{
           display: "flex",
           justifyContent: "flex-end",
+          alignItems: "center",
           gap: 8,
           marginTop: 10,
         }}
       >
+        <span style={{ color: "#8c8c8c", fontSize: 12, userSelect: "none", marginRight: "auto" }}>
+          (注：每场狩猎的日志独立成页)
+        </span>
         <button onClick={onClear} style={btnStyle}>
           清除日志
         </button>

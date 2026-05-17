@@ -13,7 +13,7 @@ export function StatusBar({
       display: "grid",
       gridTemplateColumns: "1fr 1fr 1fr 1fr",
       alignItems: "center",
-      padding: "0 20px",
+      padding: "0 16px",
       minHeight: 36,
       borderBottom: "1px solid #331e12",
       background: "transparent",
@@ -46,7 +46,7 @@ export function StatusBar({
 
 function StatusDot({ connected, label }: { connected: boolean; label: string }) {
   return (
-    <span style={{ color: connected ? "#4caf50" : "#888", fontSize: 14, whiteSpace: "nowrap" }}>
+    <span style={{ color: connected ? "#4caf50" : "#8c8c8c", fontSize: 14, whiteSpace: "nowrap" }}>
       <span style={{ marginRight: 4 }}>{connected ? "●" : "○"}</span>
       {label}
     </span>

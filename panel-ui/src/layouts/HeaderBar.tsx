@@ -15,7 +15,7 @@ export function HeaderBar({
       style={{
         display: "flex",
         alignItems: "center",
-        padding: "0 20px",
+        padding: "0 16px",
         minHeight: 44,
         userSelect: "none",
         background: "rgba(0,0,0,0.2)",

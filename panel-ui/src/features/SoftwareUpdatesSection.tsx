@@ -49,7 +49,7 @@ export const SoftwareUpdatesSection = forwardRef<HTMLDivElement, SoftwareUpdates
                   ? "#bfa76b"
                   : updateStatus === "error"
                     ? "#ff8a80"
-                    : "#b0b0b0",
+                    : "#dcdcdc",
                 fontSize: 14,
                 lineHeight: 1.7,
               }}
@@ -98,7 +98,7 @@ export const SoftwareUpdatesSection = forwardRef<HTMLDivElement, SoftwareUpdates
                   style={{
                     ...btnStyle,
                     padding: "2px 8px",
-                    fontSize: 13,
+                    fontSize: 14,
                     color: "#bfa76b",
                     border: "1px solid #bfa76b",
                   }}
@@ -112,7 +112,7 @@ export const SoftwareUpdatesSection = forwardRef<HTMLDivElement, SoftwareUpdates
                 style={{
                   ...btnStyle,
                   padding: "2px 8px",
-                  fontSize: 13,
+                  fontSize: 14,
                   color: "#8c8c8c",
                   border: "1px solid #555",
                   opacity: busy ? 0.55 : 1,
@@ -130,7 +130,7 @@ export const SoftwareUpdatesSection = forwardRef<HTMLDivElement, SoftwareUpdates
             <div style={{ color: "#bfa76b", fontSize: 14, marginBottom: 6 }}>GitHub</div>
             <div
               onClick={() => onOpenGithub(githubUrl)}
-              style={{ color: "#8ab4f8", fontSize: 13, cursor: "pointer", wordBreak: "break-all" }}
+              style={{ color: "#8ab4f8", fontSize: 14, cursor: "pointer", wordBreak: "break-all" }}
             >{githubUrl}</div>
             <div style={{ color: "#8c8c8c", fontSize: 12, lineHeight: 1.7, marginTop: 8 }}>
               自动更新依赖 GitHub Release 附件下载。网络不可达、被代理拦截或 CDN 较慢时，自动更新会失败或变慢。
@@ -141,14 +141,14 @@ export const SoftwareUpdatesSection = forwardRef<HTMLDivElement, SoftwareUpdates
                 marginTop: 8,
                 padding: "2px 8px",
                 borderRadius: 3,
-                fontSize: 13,
+                fontSize: 14,
                 color: "#8c8c8c",
                 border: "1px solid #555",
               }}
             >
               <span
                 onClick={() => onOpenGithub(githubUrl)}
-                style={{ color: "#8ab4f8", fontSize: 13, cursor: "pointer" }}
+                style={{ color: "#8ab4f8", fontSize: 14, cursor: "pointer" }}
               >打开 GitHub</span>
             </div>
           </Card>
@@ -179,16 +179,16 @@ export const SoftwareUpdatesSection = forwardRef<HTMLDivElement, SoftwareUpdates
             <div key={entry.ver} style={{ marginBottom: 12, paddingBottom: 12, borderBottom: "1px solid #2a1a10" }}>
               <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 6 }}>
                 <span style={{ color: "#dcdcdc", fontSize: 14, fontWeight: 500 }}>{entry.ver}</span>
-                <span style={{ color: "#6c6c6c", fontSize: 11 }}>{entry.date}</span>
+                <span style={{ color: "#8c8c8c", fontSize: 11 }}>{entry.date}</span>
               </div>
-              <ul style={{ margin: 0, paddingLeft: 16, color: "#b0b0b0", fontSize: 12, lineHeight: 1.8 }}>
+              <ul style={{ margin: 0, paddingLeft: 16, color: "#dcdcdc", fontSize: 12, lineHeight: 1.8 }}>
                 {entry.items.map((item, i) => (
                   <li key={i}>{item}</li>
                 ))}
               </ul>
             </div>
           ))}
-          <div style={{ color: "#6c6c6c", fontSize: 11, textAlign: "center" }}>
+          <div style={{ color: "#8c8c8c", fontSize: 12, textAlign: "center" }}>
             - 更多更新记录请访问 GitHub Releases -
           </div>
         </Card>
