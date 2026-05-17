@@ -21,6 +21,11 @@ export const HIGHLIGHT_RULES: HighlightRule[] = [
     style: { backgroundColor: "rgba(76, 175, 80, 0.25)", color: "#8bc34a" },
   },
   {
+    label: "黑龙重要阶段",
+    match: (e) => e.monster_id === 101 && [157, 169, 179, 180, 181].includes(e.action_id ?? 0),
+    style: { backgroundColor: "rgba(76, 175, 80, 0.25)", color: "#8bc34a" },
+  },
+  {
     label: "激昂金狮子破头倒地",
     match: (e) => e.monster_id === 92 && e.action_id === 198,
     style: { backgroundColor: "rgba(76, 175, 80, 0.25)", color: "#8bc34a" },
