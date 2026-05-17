@@ -38,6 +38,16 @@ export interface LogResponse {
   total_rounds: number;
 }
 
+export interface QuestStat {
+  quest_name: string;
+  quest_id: number;
+  total: number;
+  success: number;
+  fail: number;
+  abandon: number;
+  avg_abandon_ms: number;
+}
+
 export interface UpdateInfo {
   tag: string;
   url: string;

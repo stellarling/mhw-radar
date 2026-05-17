@@ -264,6 +264,31 @@ impl ConnectionLogger {
     }
 }
 
+/// 任务统计数据（通过解析 Quest 级别日志消息生成）
+#[derive(Clone, Serialize)]
+pub struct QuestStat {
+    pub quest_name: String,
+    pub quest_id: i32,
+    pub total: u32,
+    pub success: u32,
+    pub fail: u32,
+    pub abandon: u32,
+    pub avg_abandon_ms: u64,
+}
+
+/// 从 `M'Ss'CC` 格式解析毫秒（reader.rs format_quest_time 的逆运算）
+fn parse_quest_elapsed(s: &str) -> u64 {
+    let parts: Vec<&str> = s.split('\'').collect();
+    if parts.len() == 3 {
+        let minutes: u64 = parts[0].parse().unwrap_or(0);
+        let seconds: u64 = parts[1].parse().unwrap_or(0);
+        let centis: u64 = parts[2].parse().unwrap_or(0);
+        minutes * 60_000 + seconds * 1_000 + centis * 10
+    } else {
+        0
+    }
+}
+
 /// 日志存储（Mutex 内部数据），按轮次组织
 #[derive(Clone)]
 pub struct LogStorage {
@@ -324,6 +349,111 @@ impl LogStorage {
     /// 合并所有轮次的日志（用于"导出全部"）
     pub fn all_entries(&self) -> Vec<LogEntry> {
         self.rounds.iter().flatten().cloned().collect()
+    }
+
+    /// 遍历所有日志，解析 Quest 级别消息，按任务名称统计完成情况。
+    ///
+    /// 返回按 total 降序排列的 Vec<QuestStat>。
+    pub fn compute_quest_stats(&self) -> Vec<QuestStat> {
+        use std::collections::HashMap;
+
+        // quest_name → (quest_id, total, success, fail, abandon, abandon_ms_sum, abandon_count)
+        let mut stats: HashMap<String, (i32, u32, u32, u32, u32, u64, u32)> = HashMap::new();
+        let mut current_quest: Option<(String, i32)> = None;
+
+        for entry in self.rounds.iter().flatten() {
+            if entry.level != LogLevel::Quest {
+                continue;
+            }
+
+            // 任务开始: "[quest_name] 任务开始(ID:id)，本轮第n次任务"
+            if let Some(start_body) = entry.message.strip_prefix('[') {
+                if let Some(rest) = start_body.split_once("] ") {
+                    let quest_name = rest.0.to_string();
+                    if rest.1.contains("任务开始") {
+                        // 提取 quest_id
+                        let qid = rest.1
+                            .split("ID:")
+                            .nth(1)
+                            .and_then(|s| s.split(')').next())
+                            .and_then(|s| s.parse().ok())
+                            .unwrap_or(0);
+                        current_quest = Some((quest_name, qid));
+                        continue;
+                    }
+                }
+            }
+
+            // 任务结束: "任务{label}！耗时 {time}"
+            // label ∈ [成功, 失败, 放弃, 退出]
+            if let Some(msg) = entry.message.strip_prefix("任务") {
+                if let Some(end) = msg.split_once("！耗时 ") {
+                    let label = end.0;
+                    let elapsed_str = end.1;
+                    let elapsed_ms = parse_quest_elapsed(elapsed_str);
+
+                    let (name, qid) = match &current_quest {
+                        Some((n, id)) => (n.clone(), *id),
+                        None => ("未知".to_string(), 0),
+                    };
+
+                    let (total_add, success_add, fail_add, abandon_add, abandon_ms_add, abandon_cnt_add) =
+                        match label {
+                            "成功" => (1u32, 1u32, 0, 0, 0, 0),
+                            "失败" => (1u32, 0, 1u32, 0, 0, 0),
+                            "放弃" => (1u32, 0, 0, 1u32, elapsed_ms, 1u32),
+                            _ => (1u32, 0, 0, 0, 0, 0),
+                        };
+
+                    let entry = stats.entry(name).or_insert((qid, 0, 0, 0, 0, 0, 0));
+                    entry.0 = qid; // 最新 quest_id 为准
+                    entry.1 += total_add;
+                    entry.2 += success_add;
+                    entry.3 += fail_add;
+                    entry.4 += abandon_add;
+                    entry.5 += abandon_ms_add;
+                    entry.6 += abandon_cnt_add;
+
+                    current_quest = None;
+                    continue;
+                }
+            }
+
+            // 任务中断: "任务中断！耗时 {time}" — 不计入完成，只清当前任务
+            if entry.message.starts_with("任务中断") {
+                current_quest = None;
+                continue;
+            }
+
+            // 任务记录中断（连接丢失）：清当前任务
+            if entry.message == "任务记录中断：游戏连接丢失" {
+                current_quest = None;
+                continue;
+            }
+        }
+
+        let mut result: Vec<QuestStat> = stats
+            .into_iter()
+            .map(|(name, (qid, total, success, fail, abandon, abandon_ms_sum, abandon_cnt))| {
+                let avg = if abandon_cnt > 0 {
+                    abandon_ms_sum / abandon_cnt as u64
+                } else {
+                    0
+                };
+                QuestStat {
+                    quest_name: name,
+                    quest_id: qid,
+                    total,
+                    success,
+                    fail,
+                    abandon,
+                    avg_abandon_ms: avg,
+                }
+            })
+            .collect();
+
+        result.sort_by(|a, b| b.total.cmp(&a.total).then_with(|| a.quest_name.cmp(&b.quest_name)));
+        result
     }
 }
 

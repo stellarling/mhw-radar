@@ -239,6 +239,12 @@ fn route(
             Some((200, serde_json::json!({ "total_rounds": store.round_count() }).to_string()))
         }
 
+        ("GET", "/api/quest-stats") => {
+            let store = logs.lock().ok()?;
+            let stats = store.compute_quest_stats();
+            serde_json::to_string(&stats).ok().map(|b| (200, b))
+        }
+
         ("GET", "/api/status") => {
             let d = radar_data.lock().ok()?;
             let status = PanelStatus {
