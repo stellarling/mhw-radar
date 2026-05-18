@@ -123,6 +123,7 @@
     {"action_id": 165, "name": "P1转P2"},
     {"action_id": 166, "name": "P1转P2"},
     {"action_id": 167, "name": "P1转P2"},
+    {"action_id": 168, "name": "P2转P3"},
     {"action_id": 169, "name": "P2转P3"},
     {"action_id": 170, "name": "P2转P3"},
     {"action_id": 171, "name": "P2转P3"},

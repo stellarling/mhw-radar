@@ -22,7 +22,7 @@ export const HIGHLIGHT_RULES: HighlightRule[] = [
   },
   {
     label: "黑龙重要阶段",
-    match: (e) => e.monster_id === 101 && [157, 169, 179, 180, 181].includes(e.action_id ?? 0),
+    match: (e) => e.monster_id === 101 && [157, 158, 168, 169, 179, 180, 181].includes(e.action_id ?? 0),
     style: { backgroundColor: "rgba(76, 175, 80, 0.25)", color: "#8bc34a" },
   },
   {
