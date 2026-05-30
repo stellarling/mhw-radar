@@ -435,6 +435,7 @@ fn main() {
             get_version,
             get_app_dir,
             get_temp_dir,
+            fetch_update_text,
             download_update,
             spawn_updater,
             open_external_url,
@@ -703,6 +704,45 @@ fn validate_expected_sha256(value: &str) -> Result<String, String> {
         return Err("expected_sha256 必须是 64 位十六进制 SHA-256".to_string());
     }
     Ok(v)
+}
+
+/// 使用 Rust HTTP 客户端获取更新相关的小文件内容（如 .sha256）。
+/// 避免 WebView fetch() 因跨域/CDN 重定向导致 Failed to fetch。
+#[tauri::command]
+async fn fetch_update_text(url: String) -> Result<String, String> {
+    let parsed = reqwest::Url::parse(&url)
+        .map_err(|e| format!("校验文件地址无效: {}", e))?;
+
+    if parsed.scheme() != "https" {
+        return Err("校验文件必须使用 HTTPS 地址".to_string());
+    }
+
+    let host = parsed.host_str().unwrap_or("");
+    if host != "github.com" {
+        return Err(format!("校验文件地址不是 github.com: {}", host));
+    }
+
+    let client = reqwest::Client::builder()
+        .user_agent(format!("MHW-Radar-Updater/{}", env!("CARGO_PKG_VERSION")))
+        .redirect(reqwest::redirect::Policy::limited(10))
+        .timeout(Duration::from_secs(20))
+        .build()
+        .map_err(|e| format!("创建下载客户端失败: {}", e))?;
+
+    let res = client
+        .get(parsed)
+        .send()
+        .await
+        .map_err(|e| format!("下载校验文件失败: {}", e))?;
+
+    let status = res.status();
+    if !status.is_success() {
+        return Err(format!("下载校验文件失败: HTTP {}", status));
+    }
+
+    res.text()
+        .await
+        .map_err(|e| format!("读取校验文件失败: {}", e))
 }
 
 /// 使用 Rust HTTP 客户端直接下载 GitHub Release 附件。

@@ -90,14 +90,16 @@ export function useUpdateChecker() {
           throw new Error(`Release ${latestTag} 缺少 SHA-256 校验文件`);
         }
 
-        // 下载 SHA-256 内容
-        const shaRes = await fetch(ensureHttpsUrl(checksumAsset.browser_download_url), {
-          cache: "no-store",
-        });
-        if (!shaRes.ok) {
-          throw new Error(`SHA-256 校验文件下载失败: HTTP ${shaRes.status}`);
+        // 通过 Rust 端下载 SHA-256 内容（避免 WebView fetch 跨域/CDN 失败）
+        let shaText: string;
+        try {
+          shaText = await invoke<string>("fetch_update_text", {
+            url: ensureHttpsUrl(checksumAsset.browser_download_url),
+          });
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          throw new Error(`无法下载 SHA-256 校验文件: ${msg}`);
         }
-        const shaText = await shaRes.text();
         const sha256 = parseSha256Sidecar(shaText, asset.name);
 
         setUpdateInfo({
