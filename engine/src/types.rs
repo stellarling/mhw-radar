@@ -37,7 +37,7 @@ impl Default for Settings {
             show_dist_h: true,
             show_dist_v: true,
             show_angle: true,
-            show_action_id: true,
+            show_action_id: false,
             show_action_name: true,
             show_counterattack: true,
             window_opacity: 180.0 / 255.0,

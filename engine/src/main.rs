@@ -94,7 +94,7 @@ fn main() -> Result<(), eframe::Error> {
             .with_decorations(false)
             .with_always_on_top()
             .with_inner_size([280.0, 105.0])
-            .with_position([100.0, 100.0])
+            .with_position([80.0, 170.0])
             .with_taskbar(false),
         ..Default::default()
     };

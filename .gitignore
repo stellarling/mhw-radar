@@ -8,4 +8,6 @@
 # 构建产物
 /dist
 *.log
+/logs/
+/log/
 node_modules/
