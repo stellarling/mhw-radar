@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, Suspense, lazy } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
 import { API, GITHUB_REPO } from "./constants";
@@ -12,7 +12,9 @@ import { ToggleSection } from "./features/ToggleSection";
 import { ConnectionDiagnostics } from "./features/ConnectionDiagnostics";
 import { LogSection } from "./features/LogSection";
 import { UpdateBanner } from "./features/UpdateBanner";
-import { LogAnalysisSection } from "./features/LogAnalysisSection";
+const LogAnalysisSection = lazy(() =>
+  import("./features/LogAnalysisSection").then((m) => ({ default: m.LogAnalysisSection }))
+);
 import { SoftwareUpdatesSection } from "./features/SoftwareUpdatesSection";
 import { UsageGuideSection } from "./features/UsageGuideSection";
 import { useQuestTimer } from "./hooks/useQuestTimer";
@@ -55,6 +57,11 @@ export default function App() {
   const { exportCurrentPage, exportAllRounds } = useLogExport(logEntries, currentRound);
 
   const githubUrl = `https://github.com/${GITHUB_REPO}`;
+
+  // ── Startup timing log ──
+  useEffect(() => {
+    console.log(`[startup] App mounted: ${performance.now().toFixed(0)}ms`);
+  }, []);
 
   // ── Settings polling ──
   useEffect(() => {
@@ -120,7 +127,7 @@ export default function App() {
     return () => clearInterval(id);
   }, [fetchLogs]);
 
-  // ── Connection log polling ──
+  // ── Connection log polling（延迟 1 秒启动） ──
   useEffect(() => {
     const fetchConnectionLogs = async () => {
       try {
@@ -132,9 +139,18 @@ export default function App() {
       }
     };
 
-    fetchConnectionLogs();
-    const id = setInterval(fetchConnectionLogs, 2000);
-    return () => clearInterval(id);
+    const startId = setTimeout(() => {
+      fetchConnectionLogs();
+      const id = setInterval(fetchConnectionLogs, 2000);
+      intervalId = id;
+    }, 1000);
+
+    let intervalId: ReturnType<typeof setInterval>;
+
+    return () => {
+      clearTimeout(startId);
+      if (intervalId !== undefined) clearInterval(intervalId);
+    };
   }, []);
 
   // ── Settings update ──
@@ -282,7 +298,9 @@ export default function App() {
               />
             </div>
 
-            <LogAnalysisSection ref={sectionRefs.logAnalysis} />
+            <Suspense fallback={<div style={{ padding: 16, fontSize: 12, color: "#8c8c8c", textAlign: "center" }}>正在加载日志分析...</div>}>
+              <LogAnalysisSection ref={sectionRefs.logAnalysis} />
+            </Suspense>
 
             <SoftwareUpdatesSection
               ref={sectionRefs.softwareUpdates}

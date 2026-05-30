@@ -41,7 +41,7 @@ async function fetchJsonWithTimeout(url: string): Promise<unknown> {
 
 export function useUpdateChecker() {
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
-  const [updateStatus, setUpdateStatus] = useState<UpdateStatus>("checking");
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus>("idle");
   const [updateError, setUpdateError] = useState("");
   const [appVersion, setAppVersion] = useState("");
   const [latestVersion, setLatestVersion] = useState("");
@@ -119,8 +119,12 @@ export function useUpdateChecker() {
     }
   }, []);
 
+  // 首屏渲染 3 秒后再自动检查更新，避免抢占 WebView 启动资源
   useEffect(() => {
-    void checkForUpdates();
+    const id = window.setTimeout(() => {
+      void checkForUpdates();
+    }, 3000);
+    return () => window.clearTimeout(id);
   }, [checkForUpdates]);
 
   const openExternal = useCallback(async (url: string) => {

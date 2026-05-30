@@ -414,27 +414,6 @@ export const LogAnalysisSection = forwardRef<HTMLDivElement, Record<string, unkn
             )}
           </Card>
 
-          {/* ── DPS 曲线重构 ── */}
-          <Card>
-            <div style={{ color: "#d4c090", fontSize: 14, marginBottom: 6 }}>
-              DPS 曲线重构
-            </div>
-            <div style={{ color: "#8c8c8c", fontSize: 12 }}>基于时间轴的伤害输出图表</div>
-            <div
-              style={{
-                display: "inline-block",
-                marginTop: 8,
-                padding: "2px 8px",
-                borderRadius: 3,
-                fontSize: 12,
-                color: "#8c8c8c",
-                border: "1px solid #555",
-              }}
-            >
-              开发中
-            </div>
-          </Card>
-
           {/* ── 出招统计 ── */}
           <Card>
             <div style={{ color: "#d4c090", fontSize: 14, marginBottom: 6 }}>
@@ -529,6 +508,27 @@ export const LogAnalysisSection = forwardRef<HTMLDivElement, Record<string, unkn
                 ))}
               </div>
             )}
+          </Card>
+
+          {/* ── DPS 曲线重构 ── */}
+          <Card>
+            <div style={{ color: "#d4c090", fontSize: 14, marginBottom: 6 }}>
+              DPS 曲线重构
+            </div>
+            <div style={{ color: "#8c8c8c", fontSize: 12 }}>基于时间轴的伤害输出图表</div>
+            <div
+              style={{
+                display: "inline-block",
+                marginTop: 8,
+                padding: "2px 8px",
+                borderRadius: 3,
+                fontSize: 12,
+                color: "#8c8c8c",
+                border: "1px solid #555",
+              }}
+            >
+              开发中
+            </div>
           </Card>
 
           {/* ── 时空位置回溯 ── */}

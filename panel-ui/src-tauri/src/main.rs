@@ -283,6 +283,31 @@ fn kill_radar_by_pid(pid: u32) {
     }
 }
 
+fn spawn_radar_fast() -> Result<Child, String> {
+    let path = radar_exe_path();
+
+    if !path.exists() {
+        return Err(format!("mhw-radar.exe not found at: {:?}", path));
+    }
+
+    let app_dir = app_root_dir();
+
+    let mut cmd = Command::new(&path);
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .current_dir(&app_dir)
+        .env("MHW_RADAR_APP_DIR", &app_dir);
+
+    #[cfg(windows)]
+    {
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    let child = cmd.spawn().map_err(|e| format!("failed to start mhw-radar.exe: {}", e))?;
+    Ok(child)
+}
+
 fn spawn_radar() {
     let path = radar_exe_path();
 
@@ -291,11 +316,7 @@ fn spawn_radar() {
         return;
     }
 
-    let app_dir = app_root_dir();
-
-    // 避免面板异常退出后，旧的悬浮窗进程继续占着 IPC 端口或 UI 资源。
-    kill_radar_by_image_name();
-
+    // 检查是否已通过 child handle 跟踪（面板的子进程）
     if let Ok(mut guard) = RADAR_PROCESS.lock() {
         if let Some(child) = guard.as_mut() {
             match child.try_wait() {
@@ -310,36 +331,32 @@ fn spawn_radar() {
         }
     }
 
-    let mut cmd = Command::new(&path);
-    cmd.stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        // 关键：让 engine 的当前工作目录指向应用根目录。
-        .current_dir(&app_dir)
-        // 关键：让 engine 保存日志时优先使用 MHW Radar.exe 所在目录。
-        .env("MHW_RADAR_APP_DIR", &app_dir);
-
-    #[cfg(windows)]
-    {
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
-
-    match cmd.spawn() {
+    // 快速路径：直接启动，不做全局 taskkill
+    match spawn_radar_fast() {
         Ok(child) => {
             let pid = child.id();
-
             if let Ok(mut guard) = RADAR_PROCESS.lock() {
                 *guard = Some(child);
             }
-
-            eprintln!(
-                "[launcher] mhw-radar.exe started, pid={}, app_dir={}",
-                pid,
-                app_dir.to_string_lossy()
-            );
+            eprintln!("[launcher] mhw-radar.exe started, pid={}", pid);
         }
         Err(e) => {
-            eprintln!("[launcher] failed to start mhw-radar.exe: {}", e);
+            eprintln!("[launcher] first attempt failed: {}", e);
+            eprintln!("[launcher] cleaning stale processes and retrying...");
+            kill_radar_by_image_name();
+
+            match spawn_radar_fast() {
+                Ok(child) => {
+                    let pid = child.id();
+                    if let Ok(mut guard) = RADAR_PROCESS.lock() {
+                        *guard = Some(child);
+                    }
+                    eprintln!("[launcher] mhw-radar.exe started after cleanup, pid={}", pid);
+                }
+                Err(e2) => {
+                    eprintln!("[launcher] failed to start mhw-radar.exe after cleanup: {}", e2);
+                }
+            }
         }
     }
 }
@@ -394,6 +411,8 @@ fn kill_radar() {
 }
 
 fn main() {
+    let startup_begin = std::time::Instant::now();
+
     let _single_instance_guard = match acquire_single_instance() {
         Some(guard) => guard,
         None => {
@@ -402,7 +421,11 @@ fn main() {
         }
     };
 
+    eprintln!("[startup] single instance check: {:?}", startup_begin.elapsed());
+
     spawn_radar();
+
+    eprintln!("[startup] engine spawn done: {:?}", startup_begin.elapsed());
 
     let run_result = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -416,6 +439,10 @@ fn main() {
             spawn_updater,
             open_external_url,
         ])
+        .setup(move |_app| {
+            eprintln!("[startup] Tauri setup (window/WebView init): {:?}", startup_begin.elapsed());
+            Ok(())
+        })
         .on_window_event(|_window, event| {
             if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
                 kill_radar();
