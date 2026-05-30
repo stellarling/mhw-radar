@@ -1,5 +1,6 @@
 import { LogoImage } from "../ui/LogoImage";
 import { NavButton } from "../ui/NavButton";
+import { invoke } from "@tauri-apps/api/core";
 
 export function Sidebar({
   activeSection,
@@ -91,7 +92,18 @@ export function Sidebar({
       </div>
       <div style={{ marginTop: "auto", padding: "0 14px 14px", display: "flex", flexDirection: "column", gap: 2 }}>
         <span style={{ color: "#dcdcdc", fontSize: 14, lineHeight: 1.5 }}>MHW Radar</span>
-        <span style={{ color: "#8c8c8c", fontSize: 12, lineHeight: 1.5 }}>数据由mhdatalab.com提供</span>
+        <span style={{ color: "#8c8c8c", fontSize: 12, lineHeight: 1.5 }}>
+          数据由<span
+            style={{ color: "#b8a078", cursor: "pointer", textDecoration: "underline" }}
+            onClick={async () => {
+              try {
+                await invoke("open_external_url", { url: "https://mhdatalab.com" });
+              } catch (err) {
+                console.error("打开 mhdatalab.com 失败:", err);
+              }
+            }}
+          >mhdatalab.com</span>提供
+        </span>
       </div>
     </div>
   );

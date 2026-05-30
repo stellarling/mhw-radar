@@ -1,6 +1,6 @@
 {
   "productName": "MHW Radar",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "identifier": "com.mhw-radar.panel",
   "build": {
     "frontendDist": "../dist",

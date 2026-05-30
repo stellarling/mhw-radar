@@ -480,6 +480,13 @@ fn get_temp_dir() -> String {
     std::env::temp_dir().to_string_lossy().to_string()
 }
 
+fn is_allowed_external_host(host: &str) -> bool {
+    matches!(
+        host,
+        "github.com" | "www.github.com" | "mhdatalab.com" | "www.mhdatalab.com"
+    )
+}
+
 fn normalize_external_url(url: &str) -> Result<String, String> {
     let trimmed = url.trim();
     if trimmed.is_empty() {
@@ -492,14 +499,22 @@ fn normalize_external_url(url: &str) -> Result<String, String> {
         format!("https://{}", trimmed.trim_start_matches('/'))
     };
 
-    if !normalized.starts_with("https://github.com/") && normalized != "https://github.com" {
-        return Err("只允许打开 GitHub 链接".to_string());
+    let parsed = reqwest::Url::parse(&normalized)
+        .map_err(|e| format!("链接无效: {}", e))?;
+
+    if parsed.scheme() != "https" {
+        return Err("只允许打开 HTTPS 链接".to_string());
+    }
+
+    let host = parsed.host_str().unwrap_or("");
+    if !is_allowed_external_host(host) {
+        return Err(format!("不允许打开该外部链接: {}", host));
     }
 
     Ok(normalized)
 }
 
-/// 使用系统默认浏览器打开 GitHub 链接。
+/// 使用系统默认浏览器打开允许的外部链接。
 #[tauri::command]
 fn open_external_url(url: String) -> Result<(), String> {
     let normalized = normalize_external_url(&url)?;
