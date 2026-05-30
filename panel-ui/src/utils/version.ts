@@ -19,15 +19,37 @@ export function findUpdateAsset(data: unknown, latestTag: string): GitHubRelease
   const assets = (data as { assets?: GitHubReleaseAsset[] }).assets ?? [];
   const normalized = latestTag.replace(/^v/i, "");
   const expectedNames = [
-    `MHW-Radar-${latestTag}.zip`,
     `MHW-Radar-v${normalized}.zip`,
   ];
 
-  return (
-    assets.find((asset) => expectedNames.includes(asset.name)) ??
-    assets.find((asset) => /^MHW-Radar-v?\d+\.\d+\.\d+\.zip$/i.test(asset.name)) ??
-    null
-  );
+  return assets.find((asset) => expectedNames.includes(asset.name)) ?? null;
+}
+
+export function findChecksumAsset(data: unknown, zipAssetName: string): GitHubReleaseAsset | null {
+  const assets = (data as { assets?: GitHubReleaseAsset[] }).assets ?? [];
+  const expectedName = `${zipAssetName}.sha256`;
+  return assets.find((asset) => asset.name === expectedName) ?? null;
+}
+
+export function parseSha256Sidecar(text: string, expectedFileName: string): string {
+  const line = text.split(/\r?\n/).map((l) => l.trim()).find(Boolean);
+  if (!line) throw new Error("SHA-256 文件为空");
+
+  const match = line.match(/^([a-fA-F0-9]{64})(?:\s+(.+))?$/);
+  if (!match) throw new Error("SHA-256 文件格式无效");
+
+  const hash = match[1].toLowerCase();
+  const fileName = match[2]?.trim();
+
+  if (!fileName) {
+    throw new Error("SHA-256 文件缺少文件名");
+  }
+
+  if (fileName !== expectedFileName) {
+    throw new Error(`SHA-256 文件名不匹配: expected ${expectedFileName}, got ${fileName}`);
+  }
+
+  return hash;
 }
 
 export function formatBytes(bytes: number): string {
@@ -77,7 +99,7 @@ export function formatUpdateStatus(
       return detail ? `${message} ${detail}` : message;
     }
     case "installing":
-      return "更新包已下载，正在启动安装脚本...";
+      return "更新包已下载，正在启动更新器...";
     case "latest":
       return latestVersion ? `已是最新（${latestVersion}）` : "已是最新";
     case "error":

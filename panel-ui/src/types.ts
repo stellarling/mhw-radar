@@ -69,6 +69,7 @@ export interface UpdateInfo {
   tag: string;
   url: string;
   fileName: string;
+  sha256: string;
 }
 
 export interface UpdateDownloadProgress {

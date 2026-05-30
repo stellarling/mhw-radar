@@ -5,6 +5,7 @@
     "dev": "cd panel-ui && npm run tauri dev",
     "dev:frontend": "cd panel-ui && npm run dev",
     "build": "cd panel-ui && npm run tauri build",
+    "build:updater": "cargo build --release --manifest-path updater/Cargo.toml",
     "package": "npm run build && node scripts/package.mjs",
     "clean": "cargo clean --manifest-path engine/Cargo.toml && cargo clean --manifest-path panel-ui/src-tauri/Cargo.toml",
     "postinstall": "cd panel-ui && npm install"

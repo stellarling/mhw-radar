@@ -16,8 +16,13 @@ use std::os::windows::process::CommandExt;
 
 use tauri::{Emitter, Window};
 
+use sha2::{Digest, Sha256};
+
 const RADAR_EXE_NAME: &str = "mhw-radar.exe";
+const UPDATER_EXE_NAME: &str = "mhw-radar-updater.exe";
 const PANEL_EXE_NAME: &str = "MHW Radar.exe";
+
+const MAX_UPDATE_ZIP_BYTES: u64 = 300 * 1024 * 1024;
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -518,10 +523,6 @@ fn open_external_url(url: String) -> Result<(), String> {
     Err("当前平台不支持自动打开链接".to_string())
 }
 
-fn cmd_set_value(value: &str) -> String {
-    value.replace('"', "\"\"")
-}
-
 fn is_allowed_update_host(host: &str) -> bool {
     matches!(
         host,
@@ -532,7 +533,8 @@ fn is_allowed_update_host(host: &str) -> bool {
     )
 }
 
-fn validate_update_url(url: &str) -> Result<reqwest::Url, String> {
+/// 校验初始下载 URL：必须是 mhw-radar release 的 HTTPS 地址。
+fn validate_initial_update_url(url: &str, expected_asset_name: Option<&str>) -> Result<reqwest::Url, String> {
     let parsed = reqwest::Url::parse(url).map_err(|e| format!("更新包地址无效: {}", e))?;
 
     if parsed.scheme() != "https" {
@@ -543,11 +545,75 @@ fn validate_update_url(url: &str) -> Result<reqwest::Url, String> {
         .host_str()
         .ok_or_else(|| "更新包地址缺少域名".to_string())?;
 
-    if !is_allowed_update_host(host) {
-        return Err(format!("更新包下载地址不是可信的 GitHub 地址: {}", host));
+    if host != "github.com" {
+        return Err(format!("更新包初始下载地址必须是 github.com: {}", host));
+    }
+
+    let path = parsed.path();
+    if !path.starts_with("/stellarling/mhw-radar/releases/download/") {
+        return Err("更新包地址不是 mhw-radar 的 Release 下载地址".to_string());
+    }
+
+    if let Some(expected_name) = expected_asset_name {
+        if !path.ends_with(expected_name) {
+            return Err(format!(
+                "更新包地址文件名不匹配: 期望 {}",
+                expected_name
+            ));
+        }
     }
 
     Ok(parsed)
+}
+
+/// 校验 redirect 后的 URL host（允许 GitHub CDN）。
+fn validate_redirect_update_url(url: &reqwest::Url) -> Result<(), String> {
+    let host = url
+        .host_str()
+        .ok_or_else(|| "跳转地址缺少域名".to_string())?;
+
+    if !is_allowed_update_host(host) {
+        return Err(format!("跳转到非可信域名: {}", host));
+    }
+    Ok(())
+}
+
+/// 校验下载目标路径：必须在 %TEMP%/mhw-radar-update-* 下，文件名是 .zip。
+fn validate_update_dest(dest: &std::path::Path) -> Result<(), String> {
+    let temp = std::env::temp_dir();
+    let canonical_temp = temp.canonicalize().ok().unwrap_or_else(|| temp.clone());
+
+    // 父目录 canonicalize
+    let parent = dest.parent().ok_or("更新包目标路径无父目录")?;
+    let canonical_parent = parent
+        .canonicalize()
+        .map_err(|_| format!("更新包目标父目录不存在: {}", parent.display()))?;
+
+    if !canonical_parent.starts_with(&canonical_temp) {
+        return Err("更新包必须在临时目录下".to_string());
+    }
+
+    let parent_name = canonical_parent
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("");
+    if !parent_name.starts_with("mhw-radar-update-") {
+        return Err("更新包父目录名必须以 mhw-radar-update- 开头".to_string());
+    }
+
+    if dest.extension().and_then(|e| e.to_str()) != Some("zip") {
+        return Err("更新包必须为 .zip 文件".to_string());
+    }
+
+    if safe_name(dest).contains("..") {
+        return Err("更新包路径不允许 ..".to_string());
+    }
+
+    Ok(())
+}
+
+fn safe_name(p: &std::path::Path) -> String {
+    p.to_string_lossy().replace('\\', "/")
 }
 
 fn emit_download_progress(
@@ -571,22 +637,72 @@ fn emit_download_progress(
     );
 }
 
+fn sha256_file(path: &std::path::Path) -> Result<String, String> {
+    let mut file = File::open(path).map_err(|e| format!("无法打开文件计算 SHA-256: {}", e))?;
+    let mut hasher = Sha256::new();
+    let mut buf = [0u8; 64 * 1024];
+    loop {
+        let n = file
+            .read(&mut buf)
+            .map_err(|e| format!("读取文件计算 SHA-256 失败: {}", e))?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(hex::encode(hasher.finalize()))
+}
+
+/// 校验 expected_sha256 是否为合法的 64 位十六进制 SHA-256。
+/// 不允许空字符串——Tauri command 是安全边界，不能依赖前端传合法值。
+fn validate_expected_sha256(value: &str) -> Result<String, String> {
+    let v = value.trim().to_ascii_lowercase();
+    if v.len() != 64 || !v.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err("expected_sha256 必须是 64 位十六进制 SHA-256".to_string());
+    }
+    Ok(v)
+}
+
 /// 使用 Rust HTTP 客户端直接下载 GitHub Release 附件。
 #[tauri::command]
-async fn download_update(window: Window, url: String, dest: String) -> Result<DownloadReport, String> {
-    tauri::async_runtime::spawn_blocking(move || download_update_blocking(window, url, dest))
-        .await
-        .map_err(|e| format!("下载线程异常: {}", e))?
+async fn download_update(
+    window: Window,
+    url: String,
+    dest: String,
+    expected_sha256: String,
+) -> Result<DownloadReport, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        download_update_blocking(window, url, dest, expected_sha256)
+    })
+    .await
+    .map_err(|e| format!("下载线程异常: {}", e))?
 }
 
 /// 真正执行阻塞下载的函数。只能在 blocking 线程中调用。
-fn download_update_blocking(window: Window, url: String, dest: String) -> Result<DownloadReport, String> {
-    let parsed_url = validate_update_url(&url)?;
-
+fn download_update_blocking(
+    window: Window,
+    url: String,
+    dest: String,
+    expected_sha256: String,
+) -> Result<DownloadReport, String> {
     let dest_path = std::path::PathBuf::from(&dest);
+
+    // 先确保目标父目录存在（后续 canonicalize 需要目录存在）
     if let Some(parent) = dest_path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("无法创建临时目录: {}", e))?;
     }
+
+    // 校验目标路径
+    validate_update_dest(&dest_path)?;
+
+    // 强制校验 expected_sha256，不允许空值绕过
+    let expected_sha256 = validate_expected_sha256(&expected_sha256)?;
+
+    // 校验初始 URL
+    let asset_name = dest_path
+        .file_name()
+        .and_then(|n| n.to_str());
+    let parsed_url = validate_initial_update_url(&url, asset_name)?;
 
     let part_path = dest_path.with_extension("zip.part");
     let _ = std::fs::remove_file(&dest_path);
@@ -622,18 +738,23 @@ fn download_update_blocking(window: Window, url: String, dest: String) -> Result
             }
         };
 
-        let final_url = response.url().clone();
-        if let Some(host) = final_url.host_str() {
-            if !is_allowed_update_host(host) {
-                return Err(format!("GitHub 下载跳转到了非信任域名: {}", host));
-            }
-        } else {
-            return Err("GitHub 下载跳转地址缺少域名".to_string());
-        }
+        // 校验 redirect URL host
+        validate_redirect_update_url(response.url())?;
 
         if !response.status().is_success() {
             last_err = format!("GitHub 返回 HTTP {}", response.status());
             continue;
+        }
+
+        // Content-Length 检查
+        if let Some(cl) = response.content_length() {
+            if cl > MAX_UPDATE_ZIP_BYTES {
+                let _ = std::fs::remove_file(&part_path);
+                return Err(format!(
+                    "更新包过大: {} bytes (上限 {} bytes)",
+                    cl, MAX_UPDATE_ZIP_BYTES
+                ));
+            }
         }
 
         let total = response.content_length();
@@ -658,6 +779,16 @@ fn download_update_blocking(window: Window, url: String, dest: String) -> Result
 
             downloaded += n as u64;
 
+            // 超出大小上限，立即中止
+            if downloaded > MAX_UPDATE_ZIP_BYTES {
+                drop(file);
+                let _ = std::fs::remove_file(&part_path);
+                return Err(format!(
+                    "更新包过大: 已下载 {} bytes (上限 {} bytes)",
+                    downloaded, MAX_UPDATE_ZIP_BYTES
+                ));
+            }
+
             if last_emit.elapsed() >= Duration::from_millis(200) {
                 let speed = downloaded as f64 / request_started.elapsed().as_secs_f64().max(0.001);
                 let message = format!("正在下载更新包，速度约 {:.1} MB/s", speed / 1024.0 / 1024.0);
@@ -680,6 +811,17 @@ fn download_update_blocking(window: Window, url: String, dest: String) -> Result
             continue;
         }
 
+        // Content-Length 完整性校验
+        if let Some(cl) = total {
+            if size != cl {
+                let _ = std::fs::remove_file(&part_path);
+                return Err(format!(
+                    "下载不完整: 大小 {} bytes, 期望 {} bytes",
+                    size, cl
+                ));
+            }
+        }
+
         std::fs::rename(&part_path, &dest_path).map_err(|e| {
             format!(
                 "无法保存更新包到 {}: {}",
@@ -687,6 +829,17 @@ fn download_update_blocking(window: Window, url: String, dest: String) -> Result
                 e
             )
         })?;
+
+        // SHA-256 校验（强制，之前已 validate）
+        emit_download_progress(&window, size, Some(size), "正在校验更新包完整性...");
+        let actual = sha256_file(&dest_path)?;
+        if actual != expected_sha256 {
+            let _ = std::fs::remove_file(&dest_path);
+            return Err(format!(
+                "更新包校验失败: expected {}, got {}",
+                expected_sha256, actual
+            ));
+        }
 
         emit_download_progress(&window, size, Some(size), "更新包下载完成，准备安装...");
 
@@ -704,112 +857,76 @@ fn download_update_blocking(window: Window, url: String, dest: String) -> Result
     })
 }
 
-/// 生成更新 cmd 并静默启动，然后面板退出。
+/// 清理 %TEMP%/mhw-radar-updater-run-* 目录，删除失败不阻断。
+fn cleanup_old_updater_run_dirs() {
+    let temp = std::env::temp_dir();
+    if let Ok(entries) = std::fs::read_dir(&temp) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if name.starts_with("mhw-radar-updater-run-") {
+                let _ = std::fs::remove_dir_all(&path);
+            }
+        }
+    }
+}
+
+/// 启动独立更新器 `mhw-radar-updater.exe` 并退出面板。
 ///
-/// `app_dir` — MHW Radar.exe 所在目录
-/// `zip_path` — 已下载到本地的更新包完整路径
+/// 先校验路径合法性，再将 updater 复制到临时目录后启动（使 updater 可覆盖自身）。
 #[tauri::command]
 fn spawn_updater(app_dir: String, zip_path: String) -> Result<(), String> {
-    let app_exe = std::path::Path::new(&app_dir).join(PANEL_EXE_NAME);
-    if !app_exe.exists() {
+    let app_dir = std::path::PathBuf::from(&app_dir);
+    let actual_app_dir = app_root_dir();
+
+    // 安全：禁止前端传任意 app_dir
+    if canonicalize_lossy(&app_dir) != canonicalize_lossy(&actual_app_dir) {
+        return Err("app_dir 与当前程序目录不一致".to_string());
+    }
+
+    let app_exe = app_dir.join(PANEL_EXE_NAME);
+    let updater_exe = app_dir.join("resources").join("bin").join(UPDATER_EXE_NAME);
+
+    if !app_exe.is_file() {
         return Err(format!("未找到主程序: {}", app_exe.to_string_lossy()));
     }
-
-    if !std::path::Path::new(&zip_path).exists() {
-        return Err(format!("未找到已下载的更新包: {}", zip_path));
+    if !updater_exe.is_file() {
+        return Err(format!("未找到更新器: {}", updater_exe.to_string_lossy()));
     }
 
+    let zip_path = std::path::PathBuf::from(&zip_path);
+    validate_update_zip_path(&zip_path)?;
+
+    // 清理残留的旧 updater 临时目录（删除失败不阻断）
+    cleanup_old_updater_run_dirs();
+
+    // 把 updater 复制到临时目录，使 updater 可覆盖 app 目录中自身
+    let run_dir = std::env::temp_dir().join(format!(
+        "mhw-radar-updater-run-{}-{}",
+        std::process::id(),
+        unix_millis()
+    ));
+    std::fs::create_dir_all(&run_dir)
+        .map_err(|e| format!("无法创建更新器运行目录: {}", e))?;
+
+    let temp_updater = run_dir.join(UPDATER_EXE_NAME);
+    std::fs::copy(&updater_exe, &temp_updater)
+        .map_err(|e| format!("无法复制更新器到临时目录: {}", e))?;
+
     let current_pid = std::process::id();
-    let log_path = std::env::temp_dir().join("mhw-radar-update.log");
-    let cmd_path = std::env::temp_dir().join("mhw-radar-update.cmd");
-    let extract_dir = std::env::temp_dir().join("mhw-radar-update-extract");
 
-    let cmd_content = format!(
-        "@echo off\r\n\
-         setlocal EnableExtensions\r\n\
-         set \"APP_DIR={}\"\r\n\
-         set \"ZIP_PATH={}\"\r\n\
-         set \"LOG_PATH={}\"\r\n\
-         set \"EXTRACT_DIR={}\"\r\n\
-         set \"PANEL_PID={}\"\r\n\
-         \r\n\
-         echo [%date% %time%] MHW Radar updater started > \"%LOG_PATH%\"\r\n\
-         echo APP_DIR=%APP_DIR% >> \"%LOG_PATH%\"\r\n\
-         echo ZIP_PATH=%ZIP_PATH% >> \"%LOG_PATH%\"\r\n\
-         echo PANEL_PID=%PANEL_PID% >> \"%LOG_PATH%\"\r\n\
-         \r\n\
-         REM First wait for the panel instance that spawned this updater.\r\n\
-         for /l %%i in (1,1,90) do (\r\n\
-           tasklist /fi \"PID eq %PANEL_PID%\" | find \"%PANEL_PID%\" >nul\r\n\
-           if errorlevel 1 goto panel_exited\r\n\
-           timeout /t 1 /nobreak >nul\r\n\
-         )\r\n\
-         echo [%date% %time%] Panel process did not exit in time, force killing PID %PANEL_PID%. >> \"%LOG_PATH%\"\r\n\
-         taskkill /f /pid %PANEL_PID% /t >> \"%LOG_PATH%\" 2>>&1\r\n\
-         timeout /t 1 /nobreak >nul\r\n\
-         \r\n\
-         :panel_exited\r\n\
-         echo [%date% %time%] Panel exited. >> \"%LOG_PATH%\"\r\n\
-         echo [%date% %time%] Closing all MHW Radar panel and engine processes before update. >> \"%LOG_PATH%\"\r\n\
-         taskkill /f /im \"MHW Radar.exe\" /t >> \"%LOG_PATH%\" 2>>&1\r\n\
-         taskkill /f /im mhw-radar.exe /t >> \"%LOG_PATH%\" 2>>&1\r\n\
-         timeout /t 2 /nobreak >nul\r\n\
-         \r\n\
-         rmdir /s /q \"%EXTRACT_DIR%\" >> \"%LOG_PATH%\" 2>>&1\r\n\
-         mkdir \"%EXTRACT_DIR%\" >> \"%LOG_PATH%\" 2>>&1\r\n\
-         powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \"& {{ $ErrorActionPreference = 'Stop'; Expand-Archive -LiteralPath $env:ZIP_PATH -DestinationPath $env:EXTRACT_DIR -Force }}\" >> \"%LOG_PATH%\" 2>>&1\r\n\
-         if errorlevel 1 (\r\n\
-           echo [%date% %time%] Expand-Archive failed. >> \"%LOG_PATH%\"\r\n\
-           start \"\" notepad.exe \"%LOG_PATH%\"\r\n\
-           exit /b 1\r\n\
-         )\r\n\
-         \r\n\
-         if not exist \"%EXTRACT_DIR%\\MHW Radar.exe\" (\r\n\
-           echo [%date% %time%] Extracted package missing MHW Radar.exe. >> \"%LOG_PATH%\"\r\n\
-           start \"\" notepad.exe \"%LOG_PATH%\"\r\n\
-           exit /b 1\r\n\
-         )\r\n\
-         \r\n\
-         set \"COPY_OK=0\"\r\n\
-         for /l %%i in (1,1,15) do (\r\n\
-           echo [%date% %time%] Copy attempt %%i. >> \"%LOG_PATH%\"\r\n\
-           taskkill /f /im \"MHW Radar.exe\" /t >> \"%LOG_PATH%\" 2>>&1\r\n\
-           taskkill /f /im mhw-radar.exe /t >> \"%LOG_PATH%\" 2>>&1\r\n\
-           timeout /t 1 /nobreak >nul\r\n\
-           xcopy \"%EXTRACT_DIR%\\*\" \"%APP_DIR%\\\" /E /I /Y >> \"%LOG_PATH%\" 2>>&1\r\n\
-           if not errorlevel 1 (\r\n\
-             set \"COPY_OK=1\"\r\n\
-             goto copy_done\r\n\
-           )\r\n\
-           echo [%date% %time%] Copy attempt %%i failed. >> \"%LOG_PATH%\"\r\n\
-           timeout /t 1 /nobreak >nul\r\n\
-         )\r\n\
-         \r\n\
-         :copy_done\r\n\
-         if not \"%COPY_OK%\"==\"1\" (\r\n\
-           echo [%date% %time%] File copy failed after retries. >> \"%LOG_PATH%\"\r\n\
-           echo Please close all MHW Radar.exe and mhw-radar.exe processes, then try again. >> \"%LOG_PATH%\"\r\n\
-           start \"\" notepad.exe \"%LOG_PATH%\"\r\n\
-           exit /b 1\r\n\
-         )\r\n\
-         \r\n\
-         rmdir /s /q \"%EXTRACT_DIR%\" >> \"%LOG_PATH%\" 2>>&1\r\n\
-         del \"%ZIP_PATH%\" >> \"%LOG_PATH%\" 2>>&1\r\n\
-         echo [%date% %time%] Starting updated app. >> \"%LOG_PATH%\"\r\n\
-         start \"\" /d \"%APP_DIR%\" \"%APP_DIR%\\MHW Radar.exe\"\r\n\
-         \r\n\
-         del \"%~f0\" >nul 2>nul\r\n",
-        cmd_set_value(&app_dir),
-        cmd_set_value(&zip_path),
-        cmd_set_value(&log_path.to_string_lossy()),
-        cmd_set_value(&extract_dir.to_string_lossy()),
-        current_pid,
-    );
-
-    std::fs::write(&cmd_path, cmd_content).map_err(|e| format!("无法写入更新脚本: {}", e))?;
-
-    let mut cmd = Command::new(&cmd_path);
-    cmd.stdin(Stdio::null())
+    let mut cmd = Command::new(&temp_updater);
+    cmd.arg("--app-dir")
+        .arg(&app_dir)
+        .arg("--zip")
+        .arg(&zip_path)
+        .arg("--parent-pid")
+        .arg(current_pid.to_string())
+        .arg("--restart")
+        .arg(&app_exe)
+        .arg("--self-temp-dir")
+        .arg(&run_dir)
+        .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
 
@@ -819,13 +936,67 @@ fn spawn_updater(app_dir: String, zip_path: String) -> Result<(), String> {
     }
 
     cmd.spawn()
-        .map_err(|e| format!("无法启动更新脚本: {}", e))?;
+        .map_err(|e| format!("无法启动更新器: {}", e))?;
 
     eprintln!(
-        "[updater] updater spawned: {}, log: {}",
-        cmd_path.to_string_lossy(),
-        log_path.to_string_lossy()
+        "[updater] updater temp copy spawned: {} (original: {})",
+        temp_updater.to_string_lossy(),
+        updater_exe.to_string_lossy()
     );
+    Ok(())
+}
+
+/// 规范化路径字符串，用于路径比较。
+fn canonicalize_lossy(p: &std::path::Path) -> String {
+    p.canonicalize()
+        .unwrap_or_else(|_| p.to_path_buf())
+        .to_string_lossy()
+        .replace('\\', "/")
+        .trim_end_matches('/')
+        .to_lowercase()
+}
+
+fn unix_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
+
+/// 校验更新包路径：必须位于 %TEMP%/mhw-radar-update-* 下，且为 .zip。
+fn validate_update_zip_path(zip_path: &std::path::Path) -> Result<(), String> {
+    let temp = std::env::temp_dir();
+    let canonical_temp = temp.canonicalize().ok().unwrap_or_else(|| temp.clone());
+
+    let parent = zip_path.parent().ok_or("更新包路径无父目录")?;
+    let canonical_parent = parent
+        .canonicalize()
+        .map_err(|_| format!("更新包父目录不存在: {}", parent.display()))?;
+
+    if !canonical_parent.starts_with(&canonical_temp) {
+        return Err("更新包必须在临时目录下".to_string());
+    }
+
+    let parent_name = canonical_parent
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("");
+    if !parent_name.starts_with("mhw-radar-update-") {
+        return Err("更新包父目录名必须以 mhw-radar-update- 开头".to_string());
+    }
+
+    if zip_path.extension().and_then(|e| e.to_str()) != Some("zip") {
+        return Err("更新包必须为 .zip 文件".to_string());
+    }
+
+    if !zip_path.is_file() {
+        return Err(format!("更新包文件不存在: {}", zip_path.display()));
+    }
+
+    // 不允许 ..
+    if zip_path.to_string_lossy().replace('\\', "/").contains("..") {
+        return Err("更新包路径不允许 ..".to_string());
+    }
 
     Ok(())
 }

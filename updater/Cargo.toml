@@ -1,0 +1,11 @@
+[package]
+name = "mhw-radar-updater"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "mhw-radar-updater"
+path = "src/main.rs"
+
+[dependencies]
+zip = "2"

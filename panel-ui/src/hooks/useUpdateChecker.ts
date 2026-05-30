@@ -3,7 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { GITHUB_API_LATEST } from "../constants";
-import { compareVersions, findUpdateAsset } from "../utils/version";
+import { compareVersions, findUpdateAsset, findChecksumAsset, parseSha256Sidecar } from "../utils/version";
 import { ensureHttpsUrl } from "../utils/url";
 import type {
   DownloadUpdateResult,
@@ -84,10 +84,27 @@ export function useUpdateChecker() {
           throw new Error(`Release ${latestTag} 中未找到更新包`);
         }
 
+        // 查找 SHA-256 校验文件
+        const checksumAsset = findChecksumAsset(data, asset.name);
+        if (!checksumAsset) {
+          throw new Error(`Release ${latestTag} 缺少 SHA-256 校验文件`);
+        }
+
+        // 下载 SHA-256 内容
+        const shaRes = await fetch(ensureHttpsUrl(checksumAsset.browser_download_url), {
+          cache: "no-store",
+        });
+        if (!shaRes.ok) {
+          throw new Error(`SHA-256 校验文件下载失败: HTTP ${shaRes.status}`);
+        }
+        const shaText = await shaRes.text();
+        const sha256 = parseSha256Sidecar(shaText, asset.name);
+
         setUpdateInfo({
           tag: latestTag,
           url: ensureHttpsUrl(asset.browser_download_url),
           fileName: asset.name,
+          sha256,
         });
         setUpdateStatus("available");
       } else {
@@ -137,6 +154,7 @@ export function useUpdateChecker() {
       const result = await invoke<DownloadUpdateResult>("download_update", {
         url: updateInfo.url,
         dest: zipPath,
+        expectedSha256: updateInfo.sha256,
       });
 
       setDownloadProgress({
