@@ -482,16 +482,24 @@ export const LogAnalysisSection = forwardRef<HTMLDivElement, Record<string, unkn
                         }}
                       >
                         {m.actions.length > 0 ? (
-                          m.actions
-                            .slice(0, 30)
-                            .map((a) => (
-                              <ActionRow
-                                key={a.action_id}
-                                name={a.action_name}
-                                count={a.count}
-                                total={m.total_actions}
-                              />
-                            ))
+                          <div
+                            style={{
+                              display: "grid",
+                              gridTemplateColumns: "1fr 1fr",
+                              gap: 2,
+                            }}
+                          >
+                            {m.actions
+                              .slice(0, 30)
+                              .map((a) => (
+                                <ActionRow
+                                  key={a.action_id}
+                                  name={a.action_name}
+                                  count={a.count}
+                                  total={m.total_actions}
+                                />
+                              ))}
+                          </div>
                         ) : (
                           <div style={{ color: "#6a6a6a", fontSize: 11, padding: "2px 0" }}>
                             无详细招式数据

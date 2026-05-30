@@ -564,7 +564,7 @@ impl LogStorage {
                         count,
                     })
                     .collect();
-                action_list.sort_by(|a, b| b.count.cmp(&a.count));
+                action_list.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.action_id.cmp(&b.action_id)));
                 MonsterActionStats {
                     monster_id,
                     monster_name,
@@ -574,7 +574,7 @@ impl LogStorage {
             })
             .collect();
 
-        result.sort_by(|a, b| b.total_actions.cmp(&a.total_actions));
+        result.sort_by(|a, b| b.total_actions.cmp(&a.total_actions).then_with(|| a.monster_id.cmp(&b.monster_id)));
         result
     }
 }
