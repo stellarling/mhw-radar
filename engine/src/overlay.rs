@@ -522,7 +522,7 @@ impl eframe::App for RadarApp {
                     }
 
                     // 圆形雷达图（放在最底部，快捷键提示上方）
-                    if settings.show_angle {
+                    if settings.show_radar {
                         y += 20.0; // 上方间距
 
                         draw_circular_radar(
@@ -601,7 +601,7 @@ fn calc_overlay_height(settings: &Settings, monster_id: i32) -> f32 {
         h += 22.0;
     }
 
-    if settings.show_angle {
+    if settings.show_radar {
         h += 212.0; // 20px 上方间距 + 160px 雷达 + 20px 提示文字 + 12px 下方间距
     }
 

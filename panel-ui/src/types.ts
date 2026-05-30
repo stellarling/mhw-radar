@@ -2,9 +2,7 @@ export interface Settings {
   show_time: boolean;
   show_monster_name: boolean;
   show_hp: boolean;
-  show_dist_h: boolean;
-  show_dist_v: boolean;
-  show_angle: boolean;
+  show_radar: boolean;
   show_action_id: boolean;
   show_action_name: boolean;
   show_counterattack: boolean;
@@ -118,8 +116,6 @@ export type BoolKey =
   | "show_monster_name"
   | "show_hp"
   | "show_counterattack"
-  | "show_dist_h"
-  | "show_dist_v"
-  | "show_angle"
+  | "show_radar"
   | "show_action_id"
   | "show_action_name";
