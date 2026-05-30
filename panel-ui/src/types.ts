@@ -46,6 +46,23 @@ export interface QuestStat {
   fail: number;
   abandon: number;
   avg_abandon_ms: number;
+  avg_completion_ms: number;
+  fastest_ms: number;
+  slowest_ms: number;
+  recent_completions: number[];
+}
+
+export interface ActionCountItem {
+  action_name: string;
+  action_id: number;
+  count: number;
+}
+
+export interface MonsterActionStats {
+  monster_id: number;
+  monster_name: string;
+  total_actions: number;
+  actions: ActionCountItem[];
 }
 
 export interface UpdateInfo {

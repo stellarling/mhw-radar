@@ -245,6 +245,12 @@ fn route(
             serde_json::to_string(&stats).ok().map(|b| (200, b))
         }
 
+        ("GET", "/api/action-stats") => {
+            let store = logs.lock().ok()?;
+            let stats = store.compute_action_stats();
+            serde_json::to_string(&stats).ok().map(|b| (200, b))
+        }
+
         ("GET", "/api/status") => {
             let d = radar_data.lock().ok()?;
             let status = PanelStatus {

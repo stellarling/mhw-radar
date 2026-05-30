@@ -58,6 +58,11 @@ pub fn load_monster_names() -> HashMap<i32, &'static str> {
         .collect()
 }
 
+/// 全局缓存的怪物名称表
+pub static MONSTER_NAMES_CACHE: LazyLock<HashMap<i32, &'static str>> = LazyLock::new(|| {
+    load_monster_names()
+});
+
 // ── 任务名称加载 ──────────────────────────────────────────────
 
 pub fn load_quest_names() -> HashMap<i32, &'static str> {

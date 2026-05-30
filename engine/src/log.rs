@@ -123,6 +123,8 @@ pub struct LogEntry {
     pub message: String,
     pub monster_id: Option<i32>,
     pub action_id: Option<i32>,
+    /// 招式名称（中文优先，无翻译时用英文）
+    pub action_name: Option<String>,
 }
 
 impl LogEntry {
@@ -142,6 +144,7 @@ impl LogEntry {
             message,
             monster_id: None,
             action_id: None,
+            action_name: None,
         }
     }
 }
@@ -274,6 +277,31 @@ pub struct QuestStat {
     pub fail: u32,
     pub abandon: u32,
     pub avg_abandon_ms: u64,
+    /// 平均完成时间（ms），仅成功任务
+    pub avg_completion_ms: u64,
+    /// 最快完成时间（ms）
+    pub fastest_ms: u64,
+    /// 最慢完成时间（ms）
+    pub slowest_ms: u64,
+    /// 最近 N 次完成耗时（最多 20 条），供前端展示
+    pub recent_completions: Vec<u64>,
+}
+
+/// 怪物招式计数项
+#[derive(Clone, Serialize)]
+pub struct ActionCountItem {
+    pub action_name: String,
+    pub action_id: i32,
+    pub count: u32,
+}
+
+/// 怪物招式统计
+#[derive(Clone, Serialize)]
+pub struct MonsterActionStats {
+    pub monster_id: i32,
+    pub monster_name: String,
+    pub total_actions: u32,
+    pub actions: Vec<ActionCountItem>,
 }
 
 /// 从 `M'Ss'CC` 格式解析毫秒（reader.rs format_quest_time 的逆运算）
@@ -357,8 +385,8 @@ impl LogStorage {
     pub fn compute_quest_stats(&self) -> Vec<QuestStat> {
         use std::collections::HashMap;
 
-        // quest_name → (quest_id, total, success, fail, abandon, abandon_ms_sum, abandon_count)
-        let mut stats: HashMap<String, (i32, u32, u32, u32, u32, u64, u32)> = HashMap::new();
+        // quest_name → (quest_id, total, success, fail, abandon, abandon_ms_sum, abandon_count, completion_times)
+        let mut stats: HashMap<String, (i32, u32, u32, u32, u32, u64, u32, Vec<u64>)> = HashMap::new();
         let mut current_quest: Option<(String, i32)> = None;
 
         for entry in self.rounds.iter().flatten() {
@@ -397,22 +425,27 @@ impl LogStorage {
                         None => ("未知".to_string(), 0),
                     };
 
-                    let (total_add, success_add, fail_add, abandon_add, abandon_ms_add, abandon_cnt_add) =
+                    let total_add = 1u32;
+                    let (success_add, fail_add, abandon_add, abandon_ms_add, abandon_cnt_add) =
                         match label {
-                            "成功" => (1u32, 1u32, 0, 0, 0, 0),
-                            "失败" => (1u32, 0, 1u32, 0, 0, 0),
-                            "放弃" => (1u32, 0, 0, 1u32, elapsed_ms, 1u32),
-                            _ => (1u32, 0, 0, 0, 0, 0),
+                            "成功" => (1u32, 0, 0, 0, 0),
+                            "失败" => (0, 1u32, 0, 0, 0),
+                            "放弃" => (0, 0, 1u32, elapsed_ms, 1u32),
+                            _ => (0, 0, 0, 0, 0),
                         };
 
-                    let entry = stats.entry(name).or_insert((qid, 0, 0, 0, 0, 0, 0));
-                    entry.0 = qid; // 最新 quest_id 为准
+                    let entry = stats.entry(name).or_insert((qid, 0, 0, 0, 0, 0, 0, Vec::new()));
+                    entry.0 = qid;
                     entry.1 += total_add;
                     entry.2 += success_add;
                     entry.3 += fail_add;
                     entry.4 += abandon_add;
                     entry.5 += abandon_ms_add;
                     entry.6 += abandon_cnt_add;
+                    // 记录成功完成时间
+                    if label == "成功" {
+                        entry.7.push(elapsed_ms);
+                    }
 
                     current_quest = None;
                     continue;
@@ -434,12 +467,30 @@ impl LogStorage {
 
         let mut result: Vec<QuestStat> = stats
             .into_iter()
-            .map(|(name, (qid, total, success, fail, abandon, abandon_ms_sum, abandon_cnt))| {
+            .map(|(name, (qid, total, success, fail, abandon, abandon_ms_sum, abandon_cnt, completion_times))| {
                 let avg = if abandon_cnt > 0 {
                     abandon_ms_sum / abandon_cnt as u64
                 } else {
                     0
                 };
+
+                // 完成时间分析：排序后求极值，原始顺序保留最近的
+                let sorted: Vec<u64> = {
+                    let mut t = completion_times.clone();
+                    t.sort_unstable();
+                    t
+                };
+                let len = sorted.len() as u64;
+                let avg_completion = if len > 0 {
+                    sorted.iter().sum::<u64>() / len
+                } else {
+                    0
+                };
+                let fastest = sorted.first().copied().unwrap_or(0);
+                let slowest = sorted.last().copied().unwrap_or(0);
+                // 最多 20 条最近完成记录（chronological order）
+                let recent: Vec<u64> = completion_times.iter().rev().take(20).copied().collect();
+
                 QuestStat {
                     quest_name: name,
                     quest_id: qid,
@@ -448,11 +499,82 @@ impl LogStorage {
                     fail,
                     abandon,
                     avg_abandon_ms: avg,
+                    avg_completion_ms: avg_completion,
+                    fastest_ms: fastest,
+                    slowest_ms: slowest,
+                    recent_completions: recent,
                 }
             })
             .collect();
 
         result.sort_by(|a, b| b.total.cmp(&a.total).then_with(|| a.quest_name.cmp(&b.quest_name)));
+        result
+    }
+
+    /// 遍历所有日志，按怪物 + 招式名称聚合出招次数。
+    ///
+    /// 返回按 total_actions 降序排列的 Vec<MonsterActionStats>。
+    pub fn compute_action_stats(&self) -> Vec<MonsterActionStats> {
+        use std::collections::HashMap;
+
+        let monster_names = &crate::game_data::MONSTER_NAMES_CACHE;
+        // monster_id → (monster_name, HashMap<action_name, (action_id, count)>)
+        let mut stats: HashMap<i32, (String, HashMap<String, (i32, u32)>)> = HashMap::new();
+
+        for entry in self.rounds.iter().flatten() {
+            let (Some(monster_id), Some(action_id)) = (entry.monster_id, entry.action_id) else {
+                continue;
+            };
+
+            let monster_name = monster_names
+                .get(&monster_id)
+                .copied()
+                .unwrap_or("未知")
+                .to_string();
+
+            // 招式名称：优先使用日志中已解析的名称，否则查表
+            let action_name = entry
+                .action_name
+                .clone()
+                .unwrap_or_else(|| {
+                    crate::game_data::lookup_action_name(monster_id, action_id)
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| format!("动作 #{}", action_id))
+                });
+
+            let (_, actions) = stats
+                .entry(monster_id)
+                .or_insert_with(|| (monster_name, HashMap::new()));
+
+            let (_, count) = actions
+                .entry(action_name)
+                .or_insert((action_id, 0));
+            *count += 1;
+        }
+
+        let mut result: Vec<MonsterActionStats> = stats
+            .into_iter()
+            .map(|(monster_id, (monster_name, actions))| {
+                let total_actions: u32 = actions.values().map(|(_, c)| c).sum();
+                let mut action_list: Vec<ActionCountItem> = actions
+                    .into_iter()
+                    .map(|(name, (act_id, count))| ActionCountItem {
+                        action_name: name,
+                        action_id: act_id,
+                        count,
+                    })
+                    .collect();
+                action_list.sort_by(|a, b| b.count.cmp(&a.count));
+                MonsterActionStats {
+                    monster_id,
+                    monster_name,
+                    total_actions,
+                    actions: action_list,
+                }
+            })
+            .collect();
+
+        result.sort_by(|a, b| b.total_actions.cmp(&a.total_actions));
         result
     }
 }
@@ -571,11 +693,12 @@ impl Logger {
         self.push(LogLevel::Quest, None, msg.into());
     }
 
-    /// 记录带有怪物 ID 和动作 ID 的日志（用于前端高亮匹配）
-    pub fn action_change(&self, msg: impl Into<String>, monster_id: i32, action_id: i32) {
+    /// 记录带有怪物 ID、动作 ID 和招式名称的日志（用于前端高亮匹配和出招统计）
+    pub fn action_change(&self, msg: impl Into<String>, monster_id: i32, action_id: i32, action_name: Option<String>) {
         let mut entry = LogEntry::new(LogLevel::Info, None, msg.into());
         entry.monster_id = Some(monster_id);
         entry.action_id = Some(action_id);
+        entry.action_name = action_name;
         if let Ok(mut storage) = self.storage.lock() {
             storage.push(entry);
         }
