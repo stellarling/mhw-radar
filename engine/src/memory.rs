@@ -86,6 +86,28 @@ pub fn read_ptr_chain(handle: ProcessHandle, mut addr: u64, offsets: &[u64]) -> 
     Some(addr)
 }
 
+/// 从进程内存批量读取 N 个 u64 值（用于读取怪物组件数组等固定大小数组）
+pub fn read_array_u64(handle: ProcessHandle, addr: u64, count: usize) -> Option<Vec<u64>> {
+    if addr == 0 || count == 0 {
+        return None;
+    }
+    let size = count * 8;
+    let mut buffer = vec![0u8; size];
+    if handle.copy_address(addr as usize, &mut buffer).is_ok() {
+        let mut result = Vec::with_capacity(count);
+        for i in 0..count {
+            let offset = i * 8;
+            let val = unsafe {
+                std::ptr::read_unaligned(buffer[offset..offset + 8].as_ptr() as *const u64)
+            };
+            result.push(val);
+        }
+        Some(result)
+    } else {
+        None
+    }
+}
+
 /// 从游戏进程读取指定地址的字符串（最多 max_len 字节，遇 null 截断）
 pub fn read_string(handle: ProcessHandle, addr: u64, max_len: usize) -> Option<String> {
     if addr == 0 {

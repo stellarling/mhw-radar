@@ -125,6 +125,8 @@ pub struct LogEntry {
     pub action_id: Option<i32>,
     /// 招式名称（中文优先，无翻译时用英文）
     pub action_name: Option<String>,
+    /// 怪物名称（用于前端筛选显示）
+    pub monster_name: Option<String>,
 }
 
 impl LogEntry {
@@ -145,6 +147,7 @@ impl LogEntry {
             monster_id: None,
             action_id: None,
             action_name: None,
+            monster_name: None,
         }
     }
 }
@@ -699,6 +702,17 @@ impl Logger {
         entry.monster_id = Some(monster_id);
         entry.action_id = Some(action_id);
         entry.action_name = action_name;
+        entry.monster_name = crate::game_data::MONSTER_NAMES_CACHE.get(&monster_id).copied().map(String::from);
+        if let Ok(mut storage) = self.storage.lock() {
+            storage.push(entry);
+        }
+    }
+
+    /// 记录战斗伤害日志，附带怪物标识（用于前端按怪物筛选）
+    pub fn combat_with_monster(&self, msg: impl Into<String>, monster_id: i32, monster_name: Option<String>) {
+        let mut entry = LogEntry::new(LogLevel::Combat, None, msg.into());
+        entry.monster_id = Some(monster_id);
+        entry.monster_name = monster_name;
         if let Ok(mut storage) = self.storage.lock() {
             storage.push(entry);
         }
