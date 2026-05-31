@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 /// 最大保留轮次数
 pub const MAX_ROUNDS: usize = 100;
 /// 每轮最大日志条数
-pub const MAX_LOG_ENTRIES: usize = 2000;
+pub const MAX_LOG_ENTRIES: usize = 5000;
 /// 连接诊断日志最大条数
 pub const MAX_CONNECTION_ENTRIES: usize = 200;
 
@@ -686,10 +686,6 @@ impl Logger {
     #[allow(dead_code)]
     pub fn error(&self, msg: impl Into<String>) {
         self.push(LogLevel::Error, None, msg.into());
-    }
-
-    pub fn combat(&self, msg: impl Into<String>) {
-        self.push(LogLevel::Combat, None, msg.into());
     }
 
     pub fn quest(&self, msg: impl Into<String>) {
