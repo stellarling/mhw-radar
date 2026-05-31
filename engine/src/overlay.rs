@@ -538,6 +538,7 @@ impl eframe::App for RadarApp {
                         );
 
                         y += 192.0; // 雷达占用 180 + 下方间距 12
+                        let _ = y;
                     }
 
                 } else {
