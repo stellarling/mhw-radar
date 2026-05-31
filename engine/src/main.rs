@@ -17,8 +17,10 @@ mod game_data;
 mod ipc;
 mod log;
 mod memory;
+mod monster_scanner;
 mod overlay;
 mod reader;
+mod target_selector;
 mod types;
 
 use std::sync::atomic::{AtomicBool, Ordering};

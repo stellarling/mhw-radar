@@ -444,11 +444,12 @@ impl eframe::App for RadarApp {
 
                     if settings.show_monster_name {
                         let name = data.monster_name.unwrap_or("未知怪物");
+                        let suffix = if data.monsters.len() > 1 { "(改锁定切换)" } else { "" };
 
                         painter.text(
                             egui::pos2(10.0, y),
                             egui::Align2::LEFT_TOP,
-                            format!("目标: {}", name),
+                            format!("目标: {}{}", name, suffix),
                             egui::FontId::proportional(16.0),
                             tc(egui::Color32::WHITE),
                         );

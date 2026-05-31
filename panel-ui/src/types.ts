@@ -28,6 +28,7 @@ export interface LogEntry {
   message: string;
   monster_id?: number;
   action_id?: number;
+  monster_name?: string;
 }
 
 export interface LogResponse {

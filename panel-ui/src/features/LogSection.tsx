@@ -1,4 +1,4 @@
-import { forwardRef, useState, useRef, useCallback, useEffect } from "react";
+import { forwardRef, useState, useRef, useCallback, useEffect, useMemo } from "react";
 import type { LogEntry } from "../types";
 import { LOG_COLORS, HIGHLIGHT_RULES, btnStyle } from "../constants";
 
@@ -107,6 +107,7 @@ export const LogSection = forwardRef<
 ) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [pageInput, setPageInput] = useState(String(currentRound + 1));
+  const [monsterFilter, setMonsterFilter] = useState(-1);
   const pageInputRef = useRef<HTMLInputElement>(null);
   const prevRoundRef = useRef(currentRound);
 
@@ -189,6 +190,11 @@ export const LogSection = forwardRef<
     scrollToBottom("smooth");
   }, [entries.length, autoScroll, scrollToBottom]);
 
+  // 换页时重置怪物筛选
+  useEffect(() => {
+    setMonsterFilter(-1);
+  }, [currentRound]);
+
   const handleUserScrollIntent = useCallback(() => {
     if (autoScroll) {
       clearProgrammaticScrollMark();
@@ -246,6 +252,9 @@ export const LogSection = forwardRef<
     if (logFilter === "action") return e.action_id != null;
     if (logFilter === "highlight") return HIGHLIGHT_RULES.some((r) => r.match(e));
     return true;
+  }).filter((e) => {
+    if (monsterFilter === -1) return true;
+    return e.monster_id === monsterFilter;
   });
 
   const [hoveredFilter, setHoveredFilter] = useState<string | null>(null);
@@ -263,6 +272,21 @@ export const LogSection = forwardRef<
     { value: "action" as const, label: "仅出招记录" },
     { value: "highlight" as const, label: "仅关键信息" },
   ];
+
+  // 从当前页条目中提取去重的怪物列表
+  const monsterOptions = useMemo(() => {
+    const map = new Map<number, string>();
+    for (const e of entries) {
+      if (e.monster_id != null && e.monster_name) {
+        map.set(e.monster_id, e.monster_name);
+      }
+    }
+    if (map.size <= 1) return [];
+    return [
+      { id: -1, name: "全部怪物" },
+      ...Array.from(map, ([id, name]) => ({ id, name })),
+    ];
+  }, [entries]);
 
   const filterBtnStyle = (value: string): React.CSSProperties => ({
     ...btnStyle,
@@ -373,6 +397,33 @@ export const LogSection = forwardRef<
             </button>
           ))}
         </div>
+
+        {/* 怪物筛选下拉 */}
+        {monsterOptions.length > 0 && (
+          <select
+            value={monsterFilter}
+            onChange={(e) => setMonsterFilter(Number(e.target.value))}
+            style={{
+              background: monsterFilter === -1 ? "#331e12" : "#5c3a1e",
+              color: monsterFilter === -1 ? "#dcdcdc" : "#ffddaa",
+              border: "1px solid #443322",
+              borderRadius: 3,
+              padding: "3px 6px",
+              fontSize: 13,
+              fontFamily: "inherit",
+              outline: "none",
+              cursor: "pointer",
+              height: 26,
+              alignSelf: "center",
+            }}
+          >
+            {monsterOptions.map((opt) => (
+              <option key={opt.id} value={opt.id}>
+                {opt.name}
+              </option>
+            ))}
+          </select>
+        )}
 
         {/* 自动滚动只控制当前页内部滚动 */}
         <div style={{ marginLeft: "auto" }}>

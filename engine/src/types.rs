@@ -12,6 +12,43 @@ pub struct MonsterHp {
     pub max: f32,
 }
 
+/// 单只怪物的运行时快照
+#[derive(Default, Clone, Serialize)]
+pub struct MonsterData {
+    pub monster_id: i32,
+    pub monster_name: Option<&'static str>,
+    /// 怪物实体内存地址（唯一标识）
+    pub addr: u64,
+    /// 水平距离
+    pub dist_h: f32,
+    /// 垂直高度差
+    pub dist_v: f32,
+    /// 玩家相对于怪物朝向的角度
+    pub angle: f32,
+    /// 怪物血量
+    pub monster_hp: Option<MonsterHp>,
+    /// 当前动作ID
+    pub action_id: i32,
+    /// 招式中文名称
+    pub action_name: Option<&'static str>,
+    /// 招式英文名称
+    pub action_name_en: Option<String>,
+    /// 当前被工具选中为目标
+    pub is_target: bool,
+    /// 玩家游戏内 R3 锁定此怪物
+    pub is_locked_on: bool,
+    /// 怪物在游戏双向链表中的索引（用于锁定检测）
+    pub double_list_index: i32,
+    /// 黑龙下压值（仅 monster_id=101 有效）
+    pub counterattack_value: Option<f32>,
+    /// 黑龙下压值是否已缩放
+    pub counterattack_scaled: bool,
+    /// AI 决策距离（特定怪物有配置时）
+    pub ai_dist: Option<f32>,
+    /// AI 决策角度
+    pub ai_angle: Option<f32>,
+}
+
 /// 显示设置
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Settings {
@@ -87,6 +124,9 @@ pub struct RadarData {
     pub ai_dist: Option<f32>,
     /// 怪物AI决策时参考的角度（仅招式选择瞬间更新）
     pub ai_angle: Option<f32>,
+    // ── 多怪物新增字段 ──
+    /// 当前区域所有大型怪物快照
+    pub monsters: Vec<MonsterData>,
 }
 
 /// 返回给面板的状态摘要
