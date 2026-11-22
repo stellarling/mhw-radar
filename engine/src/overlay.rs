@@ -14,7 +14,7 @@ use winapi::um::winuser::{
 };
 
 use crate::reader::format_quest_time;
-use crate::types::{RadarData, Settings};
+use crate::types::{RadarData, RadarPosition, Settings};
 
 // ── 圆形雷达图 ──────────────────────────────────────────────
 
@@ -526,19 +526,25 @@ impl eframe::App for RadarApp {
                     if settings.show_radar {
                         y += 20.0; // 上方间距
 
-                        draw_circular_radar(
-                            painter,
-                            10.0,
-                            y,
-                            160.0,
-                            data.dist_h,
-                            data.dist_v,
-                            data.angle,
-                            text_alpha,
-                        );
-
-                        y += 192.0; // 雷达占用 180 + 下方间距 12
-                        let _ = y;
+                        let radar_size = 160.0;
+                        if let Some(RadarPosition {
+                            dist_h,
+                            dist_v,
+                            angle: Some(angle),
+                        }) = data.radar_position
+                        {
+                            draw_circular_radar(
+                                painter, 10.0, y, radar_size, dist_h, dist_v, angle, text_alpha,
+                            );
+                        } else {
+                            painter.text(
+                                egui::pos2(10.0 + radar_size * 0.5, y + radar_size * 0.5),
+                                egui::Align2::CENTER_CENTER,
+                                "雷达不可用",
+                                egui::FontId::proportional(14.0),
+                                tc(egui::Color32::LIGHT_GRAY),
+                            );
+                        }
                     }
 
                 } else {

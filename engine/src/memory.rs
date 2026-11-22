@@ -9,7 +9,13 @@ pub struct Vector3 {
     pub z: f32,
 }
 
-impl Vector3 {}
+/// 读取猎人或怪物实体的世界坐标。
+pub fn read_entity_position(handle: ProcessHandle, entity_addr: u64) -> Option<Vector3> {
+    const ENTITY_POSITION_OFFSET: u64 = 0x160;
+
+    read_memory::<Vector3>(handle, entity_addr + ENTITY_POSITION_OFFSET)
+        .filter(|pos| pos.x.is_finite() && pos.y.is_finite() && pos.z.is_finite())
+}
 
 /// 通过 PID 获取进程模块基址
 pub fn get_module_base(pid: u32) -> Option<u64> {

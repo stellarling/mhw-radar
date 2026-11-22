@@ -331,10 +331,6 @@ impl DataReader {
             data.pid = self.pid;
             data.module_base = self.module_base;
 
-            let player_pos = memory::resolve_pointer(handle, self.player_base, &PLAYER_OFFSETS)
-                .and_then(|addr| memory::read_memory::<memory::Vector3>(handle, addr + 0x390))
-                .unwrap_or_default();
-
             let quest_addr = memory::resolve_pointer(handle, self.quest_base, &QUEST_OFFSETS);
             let (quest_state_raw, quest_id) = quest_addr
                 .and_then(|addr| {
@@ -444,9 +440,10 @@ impl DataReader {
             self.prev_quest_id = quest_id;
 
             if in_quest || in_guiding_lands {
-                let player_v3 = memory::Vector3 { x: player_pos.x, y: player_pos.y, z: player_pos.z };
+                let player_pos = memory::resolve_pointer(handle, self.player_base, &PLAYER_OFFSETS)
+                    .and_then(|addr| memory::read_entity_position(handle, addr));
                 let monsters = self.monster_scanner.scan_all_monsters(
-                    handle, self.game_base, player_v3, &self.monster_names,
+                    handle, self.game_base, player_pos, &self.monster_names,
                 );
                 data.monsters = monsters;
 
@@ -483,9 +480,7 @@ impl DataReader {
                             data.monster_id = m.monster_id;
                             data.monster_name = m.monster_name;
                             data.monster_hp = m.monster_hp;
-                            data.dist_h = m.dist_h;
-                            data.dist_v = m.dist_v;
-                            data.angle = m.angle;
+                            data.radar_position = m.radar_position;
                             data.action_id = m.action_id;
                             data.action_name = act_name;
                             m.action_name = act_name;
@@ -671,10 +666,14 @@ impl DataReader {
                     String::new()
                 };
 
+                let distance = monster
+                    .radar_position
+                    .map_or_else(|| "不可用".to_string(), |pos| format!("{:.0}", pos.dist_h));
+                let angle = format_hunter_angle(monster);
                 self.logger.combat_with_monster(
                     format!(
-                        "{}[{}] 玩家攻击命中! 距离:{:.0} 角度:{:.1}° 血量:{:.0} ({:.1}%) 变化:-{:.0}{}",
-                        prefix, elapsed, monster.dist_h, monster.angle, hp.current, pct, delta, counter_text,
+                        "{prefix}[{elapsed}] 玩家攻击命中! 距离:{distance} 角度:{angle} 血量:{:.0} ({pct:.1}%) 变化:-{delta:.0}{counter_text}",
+                        hp.current,
                     ),
                     monster.monster_id,
                     monster.monster_name.map(|s| s.to_string()),
@@ -716,6 +715,13 @@ impl DataReader {
     }
 }
 
+fn format_hunter_angle(monster: &MonsterData) -> String {
+    monster
+        .radar_position
+        .and_then(|pos| pos.angle)
+        .map_or_else(|| "不可用".to_string(), |angle| format!("{angle:.1}°"))
+}
+
 fn log_monster_action(
     logger: &Logger,
     handle: ProcessHandle,
@@ -738,10 +744,11 @@ fn log_monster_action(
         let pct = hp.current / hp.max * 100.0;
         format!(" 血量:{:.0} ({pct:.1}%)", hp.current)
     });
+    let angle = format_hunter_angle(monster);
     logger.action_change(
         format!(
-            "{prefix}[{elapsed}] 怪物动作变更! {ai_distances} 猎人角度:{:.1}°{hp_text} 动作ID:{} ({display_name})",
-            monster.angle, monster.action_id,
+            "{prefix}[{elapsed}] 怪物动作变更! {ai_distances} 猎人角度:{angle}{hp_text} 动作ID:{} ({display_name})",
+            monster.action_id,
         ),
         monster.monster_id,
         monster.action_id,

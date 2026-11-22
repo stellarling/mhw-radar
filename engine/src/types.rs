@@ -12,6 +12,17 @@ pub struct MonsterHp {
     pub max: f32,
 }
 
+/// 本地猎人在怪物坐标系中的相对位置。
+#[derive(Clone, Copy, Serialize)]
+pub struct RadarPosition {
+    /// XZ 平面的直线距离
+    pub dist_h: f32,
+    /// 猎人高度减去怪物高度
+    pub dist_v: f32,
+    /// 怪物朝向可读时，猎人相对该朝向的角度
+    pub angle: Option<f32>,
+}
+
 /// 单只怪物的运行时快照
 #[derive(Default, Clone, Serialize)]
 pub struct MonsterData {
@@ -19,12 +30,7 @@ pub struct MonsterData {
     pub monster_name: Option<&'static str>,
     /// 怪物实体内存地址（唯一标识）
     pub addr: u64,
-    /// 水平距离
-    pub dist_h: f32,
-    /// 垂直高度差
-    pub dist_v: f32,
-    /// 玩家相对于怪物朝向的角度
-    pub angle: f32,
+    pub radar_position: Option<RadarPosition>,
     /// 怪物血量
     pub monster_hp: Option<MonsterHp>,
     /// 当前动作ID
@@ -88,11 +94,7 @@ pub struct RadarData {
     /// 游戏进程模块基址
     pub module_base: Option<u64>,
     pub has_monster: bool,
-    /// 水平距离（XZ 平面）
-    pub dist_h: f32,
-    /// 垂直高度差（Y 轴落差）
-    pub dist_v: f32,
-    pub angle: f32,
+    pub radar_position: Option<RadarPosition>,
     pub flashing: bool,
     /// 任务计时（ms），None=无计时器可显示
     pub quest_elapsed_ms: Option<u64>,

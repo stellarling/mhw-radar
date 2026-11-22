@@ -48,15 +48,19 @@ impl TargetSelector {
         }
 
         // 2. 自动选择：距离 → HP% → 随机
-        let mut indices: Vec<usize> = (0..monsters.len()).collect();
+        let mut candidates: Vec<_> = monsters
+            .iter()
+            .enumerate()
+            .filter_map(|(index, monster)| monster.radar_position.map(|pos| (index, pos.dist_h)))
+            .collect();
+        if candidates.is_empty() {
+            return Some(0);
+        }
 
         // 距离容差：差 < 500 单位视为"同样接近"
         const DISTANCE_TOLERANCE: f32 = 500.0;
 
-        indices.sort_by(|&a, &b| {
-            let da = monsters[a].dist_h;
-            let db = monsters[b].dist_h;
-
+        candidates.sort_by(|&(a, da), &(b, db)| {
             if (da - db).abs() < DISTANCE_TOLERANCE {
                 // 比较 HP%
                 let hp_a = monsters[a]
@@ -74,10 +78,9 @@ impl TargetSelector {
         });
 
         // 3. 检查前两名是否距离+HP%均接近（触发随机分支）
-        if monsters.len() >= 2 {
-            let a = indices[0];
-            let b = indices[1];
-            let same_dist = (monsters[a].dist_h - monsters[b].dist_h).abs() < DISTANCE_TOLERANCE;
+        if let [(a, da), (b, db), ..] = candidates.as_slice() {
+            let (a, b) = (*a, *b);
+            let same_dist = (da - db).abs() < DISTANCE_TOLERANCE;
             let same_hp = if same_dist {
                 let hp_a = monsters[a]
                     .monster_hp
@@ -100,6 +103,6 @@ impl TargetSelector {
             }
         }
 
-        Some(indices[0])
+        Some(candidates[0].0)
     }
 }

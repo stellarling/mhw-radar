@@ -10,7 +10,7 @@ use process_memory::ProcessHandle;
 
 use crate::game_data::lookup_action_name;
 use crate::memory;
-use crate::types::{MonsterData, MonsterHp};
+use crate::types::{MonsterData, MonsterHp, RadarPosition};
 
 // ── 内存偏移常量 ──
 
@@ -29,8 +29,6 @@ const EM_STRING_MAX_LEN: usize = 64;
 const MONSTER_ID_OFFSET: u64 = 0x12280;
 /// 怪物在双向链表中的索引（用于锁定检测）
 const DOUBLE_LIST_INDEX_OFFSET: u64 = 0x1228C;
-/// 位置 Vector3
-const POSITION_OFFSET: u64 = 0x160;
 /// 朝向四元数起始
 const QUAT_OFFSET: u64 = 0x170;
 /// 当前动作 ID（actionPtr + 0x61C8, actionId = *actionPtr + 0xB0）
@@ -65,7 +63,7 @@ impl MonsterScanner {
         &self,
         handle: ProcessHandle,
         game_base: u64,
-        player_pos: memory::Vector3,
+        player_pos: Option<memory::Vector3>,
         monster_names: &HashMap<i32, &'static str>,
     ) -> Vec<MonsterData> {
         // 1. 获取组件数组指针
@@ -112,9 +110,6 @@ impl MonsterScanner {
             let double_list_index =
                 memory::read_memory::<i32>(handle, monster_ptr + DOUBLE_LIST_INDEX_OFFSET)
                     .unwrap_or(-1);
-            let monster_pos =
-                memory::read_memory::<memory::Vector3>(handle, monster_ptr + POSITION_OFFSET)
-                    .unwrap_or_default();
             let action_id =
                 memory::read_memory::<i32>(handle, monster_ptr + ACTION_ID_OFFSET).unwrap_or(0);
 
@@ -124,12 +119,8 @@ impl MonsterScanner {
             // 怪物名称
             let monster_name = monster_names.get(&monster_id).copied();
 
-            // 距离/角度计算
-            let dx = player_pos.x - monster_pos.x;
-            let dz = player_pos.z - monster_pos.z;
-            let dist_h = (dx * dx + dz * dz).sqrt();
-            let dist_v = (player_pos.y - monster_pos.y).abs();
-            let angle = compute_angle_from_player(dx, dz, handle, monster_ptr);
+            let radar_position =
+                player_pos.and_then(|pos| read_radar_position(handle, monster_ptr, pos));
 
             // 招式中文名称查表
             let action_name = lookup_action_name(monster_id, action_id);
@@ -138,9 +129,7 @@ impl MonsterScanner {
                 monster_id,
                 monster_name,
                 addr: monster_ptr,
-                dist_h,
-                dist_v,
-                angle,
+                radar_position,
                 monster_hp,
                 action_id,
                 action_name,
@@ -178,40 +167,38 @@ pub fn read_ai_target_distances(handle: ProcessHandle, monster_addr: u64) -> Opt
 
 // ── 内部工具函数 ──
 
-/// 从怪物的四元数计算 yaw，再结合玩家方位计算角度
-fn compute_angle_from_player(
-    dx: f32,
-    dz: f32,
+fn read_radar_position(
     handle: ProcessHandle,
     monster_addr: u64,
-) -> f32 {
-    let monster_yaw = read_monster_yaw(handle, monster_addr);
-    let dir = dx.atan2(dz) * (180.0 / std::f32::consts::PI);
-    let dir = if dir < 0.0 { dir + 360.0 } else { dir };
-    (dir - monster_yaw + 360.0) % 360.0
+    player_pos: memory::Vector3,
+) -> Option<RadarPosition> {
+    let monster_pos = memory::read_entity_position(handle, monster_addr)?;
+    let dx = player_pos.x - monster_pos.x;
+    let dz = player_pos.z - monster_pos.z;
+    let dist_h = dx.hypot(dz);
+    let dist_v = player_pos.y - monster_pos.y;
+    if !dist_h.is_finite() || !dist_v.is_finite() {
+        return None;
+    }
+
+    let angle = read_monster_yaw(handle, monster_addr)
+        .map(|yaw| (dx.atan2(dz).to_degrees() - yaw).rem_euclid(360.0));
+    Some(RadarPosition {
+        dist_h,
+        dist_v,
+        angle,
+    })
 }
 
-/// 从怪物内存读取朝向（四元数 → yaw 角度）
-fn read_monster_yaw(handle: ProcessHandle, addr: u64) -> f32 {
-    let (qx, qy, qz, qw) = match (
-        memory::read_memory::<f32>(handle, addr + QUAT_OFFSET),
-        memory::read_memory::<f32>(handle, addr + QUAT_OFFSET + 4),
-        memory::read_memory::<f32>(handle, addr + QUAT_OFFSET + 8),
-        memory::read_memory::<f32>(handle, addr + QUAT_OFFSET + 12),
-    ) {
-        (Some(x), Some(y), Some(z), Some(w)) => (x, y, z, w),
-        _ => return 0.0,
-    };
+/// 从怪物朝向四元数取得 yaw 角度。
+fn read_monster_yaw(handle: ProcessHandle, addr: u64) -> Option<f32> {
+    let [qx, qy, qz, qw] = memory::read_memory::<[f32; 4]>(handle, addr + QUAT_OFFSET)?;
     let len_sq = qx * qx + qy * qy + qz * qz + qw * qw;
-    if (len_sq - 1.0).abs() > 0.1 {
-        return 0.0;
+    if !len_sq.is_finite() || (len_sq - 1.0).abs() > 0.1 {
+        return None;
     }
     let yaw_rad = (2.0 * (qw * qy + qx * qz)).atan2(1.0 - 2.0 * (qx * qx + qy * qy));
-    let mut deg = yaw_rad * (180.0 / std::f32::consts::PI);
-    if deg < 0.0 {
-        deg += 360.0;
-    }
-    deg
+    Some(yaw_rad.to_degrees())
 }
 
 /// 读取怪物血量
