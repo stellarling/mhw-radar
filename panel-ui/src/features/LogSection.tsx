@@ -2,8 +2,6 @@ import { forwardRef, useState, useRef, useCallback, useEffect, useMemo } from "r
 import type { LogEntry } from "../types";
 import { LOG_COLORS, HIGHLIGHT_RULES, btnStyle } from "../constants";
 
-const PROGRAMMATIC_SCROLL_SUPPRESS_MS = 700;
-
 const arrowBtnStyle: React.CSSProperties = {
   width: 22,
   height: 22,
@@ -110,42 +108,18 @@ export const LogSection = forwardRef<
   const [monsterFilter, setMonsterFilter] = useState(-1);
   const pageInputRef = useRef<HTMLInputElement>(null);
   const prevRoundRef = useRef(currentRound);
-
-  // 用于区分代码触发滚动和用户触发滚动。
-  const suppressScrollRef = useRef(false);
-  const suppressScrollTimerRef = useRef<number | null>(null);
-
-  const clearProgrammaticScrollMark = useCallback(() => {
-    suppressScrollRef.current = false;
-
-    if (suppressScrollTimerRef.current != null) {
-      window.clearTimeout(suppressScrollTimerRef.current);
-      suppressScrollTimerRef.current = null;
-    }
-  }, []);
-
-  const markProgrammaticScroll = useCallback(() => {
-    suppressScrollRef.current = true;
-
-    if (suppressScrollTimerRef.current != null) {
-      window.clearTimeout(suppressScrollTimerRef.current);
-    }
-
-    suppressScrollTimerRef.current = window.setTimeout(() => {
-      suppressScrollRef.current = false;
-      suppressScrollTimerRef.current = null;
-    }, PROGRAMMATIC_SCROLL_SUPPRESS_MS);
-  }, []);
+  const lastScrollTopRef = useRef(0);
+  const touchYRef = useRef<number | null>(null);
+  const draggingScrollbarRef = useRef(false);
 
   const scrollToTop = useCallback(
     (behavior: ScrollBehavior = "auto") => {
       const el = containerRef.current;
       if (!el) return;
 
-      markProgrammaticScroll();
       el.scrollTo({ top: 0, behavior });
     },
-    [markProgrammaticScroll]
+    []
   );
 
   const scrollToBottom = useCallback(
@@ -153,17 +127,24 @@ export const LogSection = forwardRef<
       const el = containerRef.current;
       if (!el) return;
 
-      markProgrammaticScroll();
       el.scrollTo({ top: el.scrollHeight, behavior });
     },
-    [markProgrammaticScroll]
+    []
   );
 
   useEffect(() => {
-    return () => {
-      clearProgrammaticScrollMark();
+    const stopScrollbarDrag = () => {
+      draggingScrollbarRef.current = false;
     };
-  }, [clearProgrammaticScrollMark]);
+
+    window.addEventListener("pointerup", stopScrollbarDrag);
+    window.addEventListener("pointercancel", stopScrollbarDrag);
+
+    return () => {
+      window.removeEventListener("pointerup", stopScrollbarDrag);
+      window.removeEventListener("pointercancel", stopScrollbarDrag);
+    };
+  }, []);
 
   // sync pageInput when currentRound changes externally
   useEffect(() => {
@@ -195,34 +176,85 @@ export const LogSection = forwardRef<
     setMonsterFilter(-1);
   }, [currentRound]);
 
-  const handleUserScrollIntent = useCallback(() => {
+  const disableAutoScroll = useCallback(() => {
     if (autoScroll) {
-      clearProgrammaticScrollMark();
       onAutoScrollChange(false);
     }
-  }, [autoScroll, clearProgrammaticScrollMark, onAutoScrollChange]);
+  }, [autoScroll, onAutoScrollChange]);
+
+  const handleWheel = useCallback(
+    (event: React.WheelEvent<HTMLDivElement>) => {
+      if (event.deltaY < 0 && event.currentTarget.scrollTop > 0) {
+        disableAutoScroll();
+      }
+    },
+    [disableAutoScroll]
+  );
+
+  const handleTouchStart = useCallback((event: React.TouchEvent<HTMLDivElement>) => {
+    touchYRef.current = event.touches[0]?.clientY ?? null;
+  }, []);
+
+  const handleTouchMove = useCallback(
+    (event: React.TouchEvent<HTMLDivElement>) => {
+      const currentY = event.touches[0]?.clientY;
+      const previousY = touchYRef.current;
+
+      if (currentY == null) return;
+
+      // 手指向下移动时，日志内容向下移动，即用户正在查看更早的日志。
+      if (previousY != null && currentY > previousY && event.currentTarget.scrollTop > 0) {
+        disableAutoScroll();
+      }
+
+      touchYRef.current = currentY;
+    },
+    [disableAutoScroll]
+  );
+
+  const handleTouchEnd = useCallback(() => {
+    touchYRef.current = null;
+  }, []);
+
+  const handleKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLDivElement>) => {
+      const scrollsUp =
+        event.key === "ArrowUp" ||
+        event.key === "PageUp" ||
+        event.key === "Home" ||
+        (event.key === " " && event.shiftKey);
+
+      if (scrollsUp && event.currentTarget.scrollTop > 0) {
+        disableAutoScroll();
+      }
+    },
+    [disableAutoScroll]
+  );
+
+  const handlePointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    const el = event.currentTarget;
+    const rect = el.getBoundingClientRect();
+    const scrollbarWidth = Math.max(6, el.offsetWidth - el.clientWidth);
+
+    // 只把滚动条区域内的按下视为拖动，避免普通的日志文本选择影响自动滚动。
+    draggingScrollbarRef.current =
+      event.pointerType === "mouse" && event.clientX >= rect.right - scrollbarWidth;
+    lastScrollTopRef.current = el.scrollTop;
+  }, []);
 
   const handleScroll = useCallback(() => {
     const el = containerRef.current;
     if (!el) return;
 
-    const distanceToBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const previousScrollTop = lastScrollTopRef.current;
+    const currentScrollTop = el.scrollTop;
+    lastScrollTopRef.current = currentScrollTop;
 
-    if (suppressScrollRef.current) {
-      // 程序滚动已经抵达底部，可以提前解除抑制；否则继续忽略 smooth scroll 过程中的中间 scroll 事件。
-      if (distanceToBottom <= 16) {
-        clearProgrammaticScrollMark();
-      }
-      return;
+    // scroll 事件本身无法区分换页、代码滚动和用户操作；仅在拖动滚动条且方向向上时关闭。
+    if (draggingScrollbarRef.current && currentScrollTop < previousScrollTop) {
+      disableAutoScroll();
     }
-
-    if (!autoScroll) return;
-
-    // 用户通过拖动滚动条、键盘、触控板等方式离开底部时，关闭当前页自动滚动。
-    if (distanceToBottom > 16) {
-      onAutoScrollChange(false);
-    }
-  }, [autoScroll, clearProgrammaticScrollMark, onAutoScrollChange]);
+  }, [disableAutoScroll]);
 
   const handlePageSubmit = useCallback(() => {
     const p = parseInt(pageInput, 10);
@@ -447,8 +479,14 @@ export const LogSection = forwardRef<
           padding: 8,
           background: "rgba(0,0,0,0.25)",
         }}
-        onWheel={handleUserScrollIntent}
-        onTouchMove={handleUserScrollIntent}
+        tabIndex={0}
+        onWheel={handleWheel}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+        onTouchCancel={handleTouchEnd}
+        onKeyDown={handleKeyDown}
+        onPointerDown={handlePointerDown}
         onScroll={handleScroll}
       >
         {filteredEntries.length === 0 ? (
