@@ -11,10 +11,10 @@ use std::time::{Duration, Instant};
 use process_memory::{ProcessHandle, TryIntoProcessHandle};
 use sysinfo::System;
 
-use crate::game_data::{load_monster_ai_configs, load_monster_names, load_quest_names, lookup_action_name};
+use crate::game_data::{load_monster_names, load_quest_names, lookup_action_name};
 use crate::log::{ConnectionEventType, ConnectionLogger, Logger, QuestState};
 use crate::memory::{self, read_ptr_chain};
-use crate::monster_scanner::MonsterScanner;
+use crate::monster_scanner::{read_ai_target_distances, MonsterScanner};
 use crate::target_selector::{TargetContext, TargetSelector};
 use crate::types::{MonsterData, RadarData};
 
@@ -24,6 +24,11 @@ use crate::types::{MonsterData, RadarData};
 const PLAYER_OFFSETS: [u64; 2] = [0x50, 0x0];
 /// 任务数据指针链偏移
 const QUEST_OFFSETS: [u64; 1] = [0x0];
+const QUEST_EXPEDITION_FLAG_OFFSET: u64 = 0xAE3B;
+/// 世界地图管理器和它记录的当前地图 ID
+const STAGE_MANAGER_OFFSET: u64 = 0x051C42B8;
+const CURRENT_STAGE_ID_OFFSET: u64 = 0xD328;
+const GUIDING_LANDS_STAGE_ID: i32 = 109;
 /// 动作指针基址偏移
 const ACTION_PTR_OFFSET: u64 = 0x61C8;
 /// 动作状态结构体指针偏移
@@ -115,9 +120,6 @@ struct MonsterTickState {
     cached_action_name_en: Option<(i32, String)>,
     last_grouped_name: Option<&'static str>,
     last_grouped_time: Instant,
-    last_logged_ai_dist: Option<f32>,
-    last_logged_ai_angle: Option<f32>,
-    last_logged_ai_name: Option<&'static str>,
     last_action_change: Instant,
 }
 
@@ -133,9 +135,6 @@ impl Default for MonsterTickState {
             cached_action_name_en: None,
             last_grouped_name: None,
             last_grouped_time: now - Duration::from_secs(10),
-            last_logged_ai_dist: None,
-            last_logged_ai_angle: None,
-            last_logged_ai_name: None,
             last_action_change: now - Duration::from_secs(1),
         }
     }
@@ -162,8 +161,6 @@ struct DataReader {
     flash_until: Instant,
     quest_elapsed_frozen: Option<Duration>,
     counterattack_scaled: bool,
-    /// 各怪物AI决策值的地址配置
-    monster_ai_configs: HashMap<i32, crate::game_data::MonsterAiConfig>,
     monster_names: HashMap<i32, &'static str>,
     quest_names: HashMap<i32, &'static str>,
     logger: Logger,
@@ -202,7 +199,6 @@ impl DataReader {
             flash_until: now - Duration::from_secs(1),
             quest_elapsed_frozen: None,
             counterattack_scaled: false,
-            monster_ai_configs: load_monster_ai_configs(),
             monster_names,
             quest_names,
             logger,
@@ -339,19 +335,25 @@ impl DataReader {
                 .and_then(|addr| memory::read_memory::<memory::Vector3>(handle, addr + 0x390))
                 .unwrap_or_default();
 
-            let (quest_state_raw, quest_id) =
-                memory::resolve_pointer(handle, self.quest_base, &QUEST_OFFSETS)
-                    .and_then(|addr| {
-                        let state = memory::read_memory::<i32>(handle, addr + 0x54)?;
-                        let id = memory::read_memory::<i32>(handle, addr + 0x4C)?;
-                        Some((state, id))
-                    })
-                    .unwrap_or((0, 0));
+            let quest_addr = memory::resolve_pointer(handle, self.quest_base, &QUEST_OFFSETS);
+            let (quest_state_raw, quest_id) = quest_addr
+                .and_then(|addr| {
+                    let state = memory::read_memory::<i32>(handle, addr + 0x54)?;
+                    let id = memory::read_memory::<i32>(handle, addr + 0x4C)?;
+                    Some((state, id))
+                })
+                .unwrap_or((0, 0));
 
             let in_quest = quest_state_raw == 2 && quest_id > 0;
+            let in_guiding_lands = !in_quest
+                && quest_addr.is_some_and(|addr| is_guiding_lands_expedition(handle, self.game_base, addr));
             data.in_quest = in_quest;
             data.quest_id = quest_id;
-            data.quest_name = self.quest_names.get(&quest_id).copied();
+            data.quest_name = if in_guiding_lands {
+                Some("聚魔之地")
+            } else {
+                self.quest_names.get(&quest_id).copied()
+            };
 
             // 任务计时器
             if in_quest {
@@ -441,8 +443,7 @@ impl DataReader {
             self.prev_quest_state = current_state;
             self.prev_quest_id = quest_id;
 
-            // -- multi monster scanning --
-            if in_quest {
+            if in_quest || in_guiding_lands {
                 let player_v3 = memory::Vector3 { x: player_pos.x, y: player_pos.y, z: player_pos.z };
                 let monsters = self.monster_scanner.scan_all_monsters(
                     handle, self.game_base, player_v3, &self.monster_names,
@@ -476,15 +477,6 @@ impl DataReader {
                             None
                         };
 
-                        let ai_config = self.monster_ai_configs.get(&target_monster_id).cloned();
-                        let ai_decision = ai_config.as_ref().and_then(|config| {
-                            memory::resolve_pointer(handle, self.game_base + config.base_offset, &config.pointer_offsets)
-                                .and_then(|addr| Some((
-                                    memory::read_memory::<f32>(handle, addr + config.dist_field_offset)?,
-                                    memory::read_memory::<f32>(handle, addr + config.angle_field_offset)?,
-                                )))
-                        });
-
                         if let Some(m) = data.monsters.get_mut(idx) {
                             m.is_target = true;
 
@@ -517,32 +509,23 @@ impl DataReader {
                                 data.counterattack_scaled = false;
                             }
 
-                            data.ai_dist = ai_decision.map(|(d, _)| d);
-                            data.ai_angle = ai_decision.map(|(_, a)| a);
-                            m.ai_dist = data.ai_dist;
-                            m.ai_angle = data.ai_angle;
-
-                            let flashed = self.detect_target_changes(
-                                handle, m, is_multi, ai_config, data.quest_elapsed_ms,
-                            );
-                            if flashed {
+                            if in_quest
+                                && self.detect_target_changes(handle, m, is_multi, data.quest_elapsed_ms)
+                            {
                                 self.flash_until = Instant::now() + Duration::from_millis(200);
                             }
                         }
                     }
 
-                    for m in &data.monsters {
-                        if m.is_target { continue; }
-                        self.detect_monster_action_change(handle, m, data.quest_elapsed_ms);
+                    if in_quest {
+                        for monster in data.monsters.iter().filter(|monster| !monster.is_target) {
+                            self.detect_monster_action_change(handle, monster, data.quest_elapsed_ms);
+                        }
                     }
-
-                    let active_addrs: Vec<u64> = data.monsters.iter().map(|m| m.addr).collect();
-                    self.monster_states.retain(|addr, _| active_addrs.contains(addr));
-                } else {
-                    data.has_monster = false;
                 }
+                self.monster_states
+                    .retain(|addr, _| data.monsters.iter().any(|monster| monster.addr == *addr));
             } else {
-                data.monsters.clear();
                 self.monster_states.clear();
                 self.counterattack_scaled = false;
             }
@@ -557,6 +540,17 @@ impl DataReader {
 
         data
     }
+}
+
+// 聚魔探索的显血和锁定沿用正式任务的怪物扫描，但没有正式任务轮次。
+fn is_guiding_lands_expedition(handle: ProcessHandle, game_base: u64, quest_addr: u64) -> bool {
+    let is_expedition = memory::read_memory::<u8>(handle, quest_addr + QUEST_EXPEDITION_FLAG_OFFSET)
+        .is_some_and(|flag| flag != 0);
+
+    is_expedition
+        && memory::read_ptr_chain(handle, game_base, &[STAGE_MANAGER_OFFSET])
+            .and_then(|manager| memory::read_memory::<i32>(handle, manager + CURRENT_STAGE_ID_OFFSET))
+            == Some(GUIDING_LANDS_STAGE_ID)
 }
 
 // ── 锁目标读取 ──
@@ -577,22 +571,15 @@ impl DataReader {
         monster_addr: u64,
         action_id: i32,
     ) -> Option<String> {
-        for state in self.monster_states.values() {
-            if let Some((id, ref name)) = state.cached_action_name_en {
-                if id == action_id {
-                    return Some(name.clone());
-                }
+        let state = self.monster_states.entry(monster_addr).or_default();
+        if let Some((cached_id, name)) = &state.cached_action_name_en {
+            if *cached_id == action_id {
+                return Some(name.clone());
             }
         }
+
         let name = read_action_name_en(handle, monster_addr, action_id);
-        if name.is_some() {
-            for state in self.monster_states.values_mut() {
-                if state.cached_action_name_en.is_none() {
-                    state.cached_action_name_en = Some((action_id, name.clone().unwrap()));
-                    break;
-                }
-            }
-        }
+        state.cached_action_name_en = name.clone().map(|name| (action_id, name));
         name
     }
 
@@ -601,7 +588,6 @@ impl DataReader {
         handle: ProcessHandle,
         monster: &MonsterData,
         is_multi: bool,
-        ai_config: Option<crate::game_data::MonsterAiConfig>,
         quest_elapsed_ms: Option<u64>,
     ) -> bool {
         let state = self.monster_states.entry(monster.addr).or_default();
@@ -610,90 +596,52 @@ impl DataReader {
 
         let static_name = monster.action_name;
         let display_name = static_name.or(monster.action_name_en.as_deref()).unwrap_or("未知");
-        let is_new_action = if ai_config.is_some() {
-            let ai_dist = monster.ai_dist;
-            let ai_angle = monster.ai_angle;
-            let ai_changed = ai_dist.is_some()
-                && (state.last_logged_ai_dist.map_or(true, |ld| ld != ai_dist.unwrap())
-                    || state.last_logged_ai_angle.map_or(true, |la| la != ai_angle.unwrap()));
-            if ai_changed {
-                state.last_logged_ai_dist = ai_dist;
-                state.last_logged_ai_angle = ai_angle;
-                state.last_logged_ai_name = static_name;
-                true
+        let frame_reset = memory::read_memory::<u64>(handle, monster.addr + ACTION_STATE_OFFSET)
+            .and_then(|ptr| {
+                let frame = memory::read_memory::<f32>(handle, ptr + ACTION_CURRENT_FRAME)?;
+                Some((ptr, frame))
+            })
+            .map(|(ptr, frame)| {
+                let ptr_unchanged = state.last_action_state_ptr == ptr
+                    || state.last_action_state_ptr == 0;
+                state.last_action_state_ptr = ptr;
+                let reset = state.action_id_init && state.last_frame > 1.0 && frame < 0.5;
+                state.last_frame = frame;
+                reset && ptr_unchanged
+            })
+            .unwrap_or(false);
+
+        let id_changed = state.action_id_init && action_id != state.last_action_id;
+        let debounced = !id_changed
+            && state.last_action_change.elapsed() < Duration::from_millis(1700);
+        let mut is_new_action = (id_changed || frame_reset) && !debounced;
+
+        if is_new_action {
+            let same_name_group = static_name.is_some()
+                && static_name == state.last_grouped_name
+                && state.last_grouped_time.elapsed() < Duration::from_millis(1200);
+            if same_name_group {
+                state.last_grouped_time = Instant::now();
+                is_new_action = false;
             } else {
-                let name_changed = static_name.is_some()
-                    && static_name != state.last_logged_ai_name;
-                if name_changed {
-                    state.last_logged_ai_name = static_name;
-                    true
-                } else {
-                    false
-                }
+                state.last_grouped_name = static_name;
+                state.last_grouped_time = Instant::now();
             }
-        } else {
-            let frame_reset = memory::read_memory::<u64>(handle, monster.addr + ACTION_STATE_OFFSET)
-                .and_then(|ptr| {
-                    let frame = memory::read_memory::<f32>(handle, ptr + ACTION_CURRENT_FRAME)?;
-                    Some((ptr, frame))
-                })
-                .map(|(ptr, frame)| {
-                    let ptr_unchanged = state.last_action_state_ptr == ptr
-                        || state.last_action_state_ptr == 0;
-                    state.last_action_state_ptr = ptr;
-                    let reset = state.action_id_init && state.last_frame > 1.0 && frame < 0.5;
-                    state.last_frame = frame;
-                    reset && ptr_unchanged
-                })
-                .unwrap_or(false);
-
-            let id_changed = state.action_id_init && action_id != state.last_action_id;
-            let debounced = !id_changed
-                && state.last_action_change.elapsed() < Duration::from_millis(1700);
-            let mut candidate = (id_changed || frame_reset) && !debounced;
-
-            if candidate {
-                let same_name_group = static_name.is_some()
-                    && static_name == state.last_grouped_name
-                    && state.last_grouped_time.elapsed() < Duration::from_millis(1200);
-                if same_name_group {
-                    state.last_grouped_time = Instant::now();
-                    candidate = false;
-                } else {
-                    state.last_grouped_name = static_name;
-                    state.last_grouped_time = Instant::now();
-                }
-            }
-            candidate
-        };
+        }
 
         if is_new_action {
             state.last_action_change = Instant::now();
             state.last_frame = 0.0;
             flashed = true;
 
-            let elapsed = quest_elapsed_ms.map(format_quest_time).unwrap_or_else(|| "??".to_string());
-            let prefix = if is_multi {
-                format!("[{}] ", monster.monster_name.unwrap_or("未知"))
-            } else {
-                String::new()
-            };
-            let name_owned = display_name.to_string();
-
-            if let Some(hp) = monster.monster_hp {
-                let pct = hp.current / hp.max * 100.0;
-                self.logger.action_change(
-                    format!("{}[{}] 怪物动作变更! 距离:{:.0} 角度:{:.1}° 血量:{:.0} ({:.1}%) 动作ID:{} ({})",
-                        prefix, elapsed, monster.dist_h, monster.angle, hp.current, pct, action_id, display_name),
-                    monster.monster_id, action_id, Some(name_owned),
-                );
-            } else {
-                self.logger.action_change(
-                    format!("{}[{}] 怪物动作变更! 距离:{:.0} 角度:{:.1}° 动作ID:{} ({})",
-                        prefix, elapsed, monster.dist_h, monster.angle, action_id, display_name),
-                    monster.monster_id, action_id, Some(name_owned),
-                );
-            }
+            log_monster_action(
+                &self.logger,
+                handle,
+                monster,
+                display_name,
+                quest_elapsed_ms,
+                is_multi,
+            );
         }
 
         state.last_action_id = action_id;
@@ -746,40 +694,59 @@ impl DataReader {
         monster: &MonsterData,
         quest_elapsed_ms: Option<u64>,
     ) {
-        let action_id = monster.action_id;
-        let addr = monster.addr;
-        // 优先查表名，其次读内存英文名兜底
-        let fallback_name = monster.action_name.or_else(|| {
-            monster.action_name_en.as_deref()
-        }).map(|s| s.to_string()).or_else(|| {
-            self.read_action_name_en_with_cache(handle, addr, action_id)
-        });
+        let state = self.monster_states.entry(monster.addr).or_default();
+        let is_new_action = state.action_id_init && monster.action_id != state.last_action_id;
+        state.last_action_id = monster.action_id;
+        state.action_id_init = true;
 
-        let state = self.monster_states.entry(addr).or_default();
-
-        if state.action_id_init && action_id != state.last_action_id {
-            let name_ref = fallback_name.as_deref().unwrap_or("未知");
-            let elapsed = quest_elapsed_ms.map(format_quest_time).unwrap_or_else(|| "??".to_string());
-            let prefix = format!("[{}] ", monster.monster_name.unwrap_or("未知"));
-
-            let msg = if let Some(hp) = monster.monster_hp {
-                let pct = hp.current / hp.max * 100.0;
-                format!("{}[{}] 怪物动作变更! 距离:{:.0} 角度:{:.1}° 血量:{:.0} ({:.1}%) 动作ID:{} ({})",
-                    prefix, elapsed, monster.dist_h, monster.angle, hp.current, pct, action_id, name_ref)
-            } else {
-                format!("{}[{}] 怪物动作变更! 距离:{:.0} 角度:{:.1}° 动作ID:{} ({})",
-                    prefix, elapsed, monster.dist_h, monster.angle, action_id, name_ref)
-            };
-
-            self.logger.action_change(
-                msg,
-                monster.monster_id, action_id, Some(name_ref.to_string()),
-            );
+        if !is_new_action {
+            return;
         }
 
-        state.last_action_id = action_id;
-        state.action_id_init = true;
+        let action_name_en = if monster.action_name.is_none() {
+            self.read_action_name_en_with_cache(handle, monster.addr, monster.action_id)
+        } else {
+            None
+        };
+        let display_name = monster
+            .action_name
+            .or(action_name_en.as_deref())
+            .unwrap_or("未知");
+        log_monster_action(&self.logger, handle, monster, display_name, quest_elapsed_ms, true);
     }
+}
+
+fn log_monster_action(
+    logger: &Logger,
+    handle: ProcessHandle,
+    monster: &MonsterData,
+    display_name: &str,
+    quest_elapsed_ms: Option<u64>,
+    include_monster_name: bool,
+) {
+    let ai_distances = match read_ai_target_distances(handle, monster.addr) {
+        Some([spatial, horizontal]) => format!("AI水平距离:{horizontal} AI三维距离:{spatial}"),
+        None => "AI水平距离:不可用 AI三维距离:不可用".to_string(),
+    };
+    let elapsed = quest_elapsed_ms.map(format_quest_time).unwrap_or_else(|| "??".to_string());
+    let prefix = if include_monster_name {
+        format!("[{}] ", monster.monster_name.unwrap_or("未知"))
+    } else {
+        String::new()
+    };
+    let hp_text = monster.monster_hp.map_or_else(String::new, |hp| {
+        let pct = hp.current / hp.max * 100.0;
+        format!(" 血量:{:.0} ({pct:.1}%)", hp.current)
+    });
+    logger.action_change(
+        format!(
+            "{prefix}[{elapsed}] 怪物动作变更! {ai_distances} 猎人距离:{:.0} 猎人角度:{:.1}°{hp_text} 动作ID:{} ({display_name})",
+            monster.dist_h, monster.angle, monster.action_id,
+        ),
+        monster.monster_id,
+        monster.action_id,
+        Some(display_name.to_string()),
+    );
 }
 
 /// 启动后台数据读取线程（20FPS），返回共享雷达数据

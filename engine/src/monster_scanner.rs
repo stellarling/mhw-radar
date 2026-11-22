@@ -39,6 +39,12 @@ const ACTION_ID_OFFSET: u64 = 0x61C8 + 0xB0;
 const HP_PTR_OFFSET: u64 = 0x7670;
 /// HP 数据偏移（hp_ptr + 0x60 → [max_hp, cur_hp]）
 const HP_DATA_OFFSET: u64 = 0x60;
+/// 怪物 AI 控制器及其 THK 上下文指针链
+const THK_CONTEXT_OFFSETS: [u64; 2] = [0x12278, 0xAA8];
+/// THK 上下文持有的怪物组件指针
+const THK_OWNER_COMPONENT_OFFSET: u64 = 0x630;
+/// 起始于三维距离，下一项为水平距离
+const THK_TARGET_DISTANCES_OFFSET: u64 = 0x600;
 
 pub struct MonsterScanner;
 
@@ -144,13 +150,30 @@ impl MonsterScanner {
                 double_list_index,
                 counterattack_value: None,
                 counterattack_scaled: false,
-                ai_dist: None,
-                ai_angle: None,
             });
         }
 
         monsters
     }
+}
+
+/// 读取同一怪物 THK 上下文中的三维和水平目标距离缓存。
+pub fn read_ai_target_distances(handle: ProcessHandle, monster_addr: u64) -> Option<[f32; 2]> {
+    let context = memory::read_ptr_chain(handle, monster_addr, &THK_CONTEXT_OFFSETS)?;
+    let owner = memory::read_ptr_chain(
+        handle,
+        context,
+        &[THK_OWNER_COMPONENT_OFFSET, COMPONENT_TO_MONSTER],
+    )?;
+    if owner != monster_addr {
+        return None;
+    }
+
+    let distances = memory::read_memory::<[f32; 2]>(handle, context + THK_TARGET_DISTANCES_OFFSET)?;
+    distances
+        .iter()
+        .all(|distance| distance.is_finite() && *distance >= 0.0)
+        .then_some(distances)
 }
 
 // ── 内部工具函数 ──

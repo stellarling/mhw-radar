@@ -43,10 +43,6 @@ pub struct MonsterData {
     pub counterattack_value: Option<f32>,
     /// 黑龙下压值是否已缩放
     pub counterattack_scaled: bool,
-    /// AI 决策距离（特定怪物有配置时）
-    pub ai_dist: Option<f32>,
-    /// AI 决策角度
-    pub ai_angle: Option<f32>,
 }
 
 /// 显示设置
@@ -120,10 +116,6 @@ pub struct RadarData {
     pub counterattack_value: Option<f32>,
     /// 下压值是否已进入 179 动作后换算模式（/0.7）
     pub counterattack_scaled: bool,
-    /// 怪物AI决策时参考的水平距离（仅招式选择瞬间更新）
-    pub ai_dist: Option<f32>,
-    /// 怪物AI决策时参考的角度（仅招式选择瞬间更新）
-    pub ai_angle: Option<f32>,
     // ── 多怪物新增字段 ──
     /// 当前区域所有大型怪物快照
     pub monsters: Vec<MonsterData>,
