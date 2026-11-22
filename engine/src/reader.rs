@@ -725,8 +725,8 @@ fn log_monster_action(
     include_monster_name: bool,
 ) {
     let ai_distances = match read_ai_target_distances(handle, monster.addr) {
-        Some([spatial, horizontal]) => format!("AI水平距离:{horizontal} AI三维距离:{spatial}"),
-        None => "AI水平距离:不可用 AI三维距离:不可用".to_string(),
+        Some([spatial, horizontal]) => format!("AI三维距离:{spatial} AI水平距离:{horizontal}"),
+        None => "AI三维距离:不可用 AI水平距离:不可用".to_string(),
     };
     let elapsed = quest_elapsed_ms.map(format_quest_time).unwrap_or_else(|| "??".to_string());
     let prefix = if include_monster_name {
@@ -740,8 +740,8 @@ fn log_monster_action(
     });
     logger.action_change(
         format!(
-            "{prefix}[{elapsed}] 怪物动作变更! {ai_distances} 猎人距离:{:.0} 猎人角度:{:.1}°{hp_text} 动作ID:{} ({display_name})",
-            monster.dist_h, monster.angle, monster.action_id,
+            "{prefix}[{elapsed}] 怪物动作变更! {ai_distances} 猎人角度:{:.1}°{hp_text} 动作ID:{} ({display_name})",
+            monster.angle, monster.action_id,
         ),
         monster.monster_id,
         monster.action_id,
