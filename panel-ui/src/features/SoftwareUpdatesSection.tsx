@@ -14,7 +14,7 @@ interface SoftwareUpdatesSectionProps {
   githubUrl: string;
   downloadProgress: UpdateDownloadProgress | null;
   onCheck: () => void;
-  onUpdate: () => void;
+  onUpdate?: () => void;
   onOpenGithub: (url: string) => void;
 }
 
@@ -40,9 +40,9 @@ export const SoftwareUpdatesSection = forwardRef<HTMLDivElement, SoftwareUpdates
       <SectionWrapper ref={ref} id="software-updates">
         <SectionHeader title="软件更新" description="版本管理、更新与更新日志" />
 
-        <div style={{ display: "flex", gap: 12, marginBottom: 16 }}>
-          <Card style={{ flex: 1 }}>
-            <div style={{ color: "#bfa76b", fontSize: 14, marginBottom: 6 }}>自动更新</div>
+        <div className="mb-4 grid gap-3 md:grid-cols-2">
+          <Card>
+            <h3 className="m-0 mb-1.5 text-sm font-semibold text-panel-gold">自动更新</h3>
             <div
               style={{
                 color: updateStatus === "available" || updateStatus === "downloading" || updateStatus === "installing"
@@ -92,7 +92,7 @@ export const SoftwareUpdatesSection = forwardRef<HTMLDivElement, SoftwareUpdates
             )}
 
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
-              {updateStatus === "available" && updateInfo && (
+              {updateStatus === "available" && updateInfo && onUpdate && (
                 <button
                   type="button"
                   style={{
@@ -126,38 +126,41 @@ export const SoftwareUpdatesSection = forwardRef<HTMLDivElement, SoftwareUpdates
             </div>
           </Card>
 
-          <Card style={{ flex: 1 }}>
-            <div style={{ color: "#bfa76b", fontSize: 14, marginBottom: 6 }}>GitHub</div>
-            <div
-              onClick={() => onOpenGithub(githubUrl)}
-              style={{ color: "#8ab4f8", fontSize: 14, cursor: "pointer", wordBreak: "break-all" }}
-            >{githubUrl}</div>
+          <Card>
+            <h3 className="m-0 mb-1.5 text-sm font-semibold text-panel-gold">GitHub</h3>
+            <a
+              href={githubUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-sm break-all text-sky-300 underline"
+              onClick={(event) => {
+                event.preventDefault();
+                onOpenGithub(githubUrl);
+              }}
+            >{githubUrl}</a>
             <div style={{ color: "#8c8c8c", fontSize: 12, lineHeight: 1.7, marginTop: 8 }}>
               自动更新依赖 GitHub Release 附件下载。网络不可达、被代理拦截或 CDN 较慢时，自动更新会失败或变慢。
-            </div>
-            <div
-              style={{
-                display: "inline-block",
-                marginTop: 8,
-                padding: "2px 8px",
-                borderRadius: 3,
-                fontSize: 14,
-                color: "#8c8c8c",
-                border: "1px solid #555",
-              }}
-            >
-              <span
-                onClick={() => onOpenGithub(githubUrl)}
-                style={{ color: "#8ab4f8", fontSize: 14, cursor: "pointer" }}
-              >打开 GitHub</span>
             </div>
           </Card>
         </div>
 
         {/* Changelog */}
         <Card style={{ marginBottom: 16 }}>
-          <div style={{ color: "#bfa76b", fontSize: 14, marginBottom: 12 }}>更新日志</div>
+          <h3 className="m-0 mb-3 text-sm font-semibold text-panel-gold">更新日志</h3>
           {[
+            {
+              ver: "v0.3.7", date: "2026-11-26", items: [
+                "更新控制面板样式，首次进入日志分析时加载统计图表",
+              ]
+            },
+            {
+              ver: "v0.3.6", date: "2026-11-23", items: [
+                "出招日志直接记录游戏 AI 的三维距离与水平距离",
+                "修复聚魔之地的怪物显血和 R3 锁定跟随",
+                "统一雷达坐标来源，修正高度提示与不可用状态",
+                "按怪物实例缓存招式名称，修复狩猎日志自动滚动",
+              ]
+            },
             {
               ver: "v0.3.0", date: "2026-05-30", items: [
                 "【重大变更】独立更新器 mhw-radar-updater.exe：更新逻辑从临时 .cmd 脚本迁移为独立 Rust 程序，支持自更新、失败回滚、安装锁防并发",
@@ -181,12 +184,12 @@ export const SoftwareUpdatesSection = forwardRef<HTMLDivElement, SoftwareUpdates
               ]
             },
           ].map((entry) => (
-            <div key={entry.ver} style={{ marginBottom: 12, paddingBottom: 12, borderBottom: "1px solid #2a1a10" }}>
-              <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 6 }}>
-                <span style={{ color: "#dcdcdc", fontSize: 14, fontWeight: 500 }}>{entry.ver}</span>
-                <span style={{ color: "#8c8c8c", fontSize: 11 }}>{entry.date}</span>
+            <div key={entry.ver} className="mb-3 border-0 border-b border-solid border-panel-border pb-3">
+              <div className="mb-1.5 flex items-baseline gap-2">
+                <span className="text-sm font-medium text-panel-text">{entry.ver}</span>
+                <span className="text-xs text-panel-muted">{entry.date}</span>
               </div>
-              <ul style={{ margin: 0, paddingLeft: 16, color: "#dcdcdc", fontSize: 12, lineHeight: 1.8 }}>
+              <ul className="m-0 list-disc pl-4 text-xs leading-relaxed text-panel-text">
                 {entry.items.map((item, i) => (
                   <li key={i}>{item}</li>
                 ))}

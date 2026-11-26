@@ -9,13 +9,8 @@ export const SectionWrapper = forwardRef<HTMLDivElement, {
     <div
       ref={ref}
       id={id}
-      style={{
-        padding: "16px 16px",
-        borderTop: "1px solid #331e12",
-        display: "flex",
-        flexDirection: "column",
-        ...style,
-      }}
+      className="flex flex-col border-0 border-t border-solid border-panel-border p-4"
+      style={style}
     >
       {children}
     </div>

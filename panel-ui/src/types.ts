@@ -1,3 +1,5 @@
+export type SectionId = "basic-tools" | "hunting-log" | "log-analysis" | "software-updates" | "usage-guide";
+
 export interface Settings {
   show_time: boolean;
   show_monster_name: boolean;

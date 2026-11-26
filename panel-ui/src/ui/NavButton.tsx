@@ -7,31 +7,21 @@ export function NavButton({
   onClick,
 }: {
   label: string;
-  icon?: ReactNode;
+  icon: ReactNode;
   active: boolean;
   onClick: () => void;
 }) {
   return (
-    <div
+    <button
+      type="button"
+      aria-current={active ? "true" : undefined}
       onClick={onClick}
-      style={{
-        width: "100%",
-        padding: "10px 14px",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: 6,
-        fontSize: 16,
-        color: active ? "#fff" : "#a09080",
-        background: active ? "linear-gradient(to right, #BFA76B, transparent)" : "transparent",
-        cursor: "pointer",
-        userSelect: "none",
-        transition: "all 0.15s",
-        lineHeight: 1.4,
-      }}
+      className={`flex cursor-pointer items-center justify-center gap-1 rounded-none border-0 bg-transparent px-1.5 py-2 text-xs leading-tight transition-colors md:w-full md:gap-2 md:px-3.5 md:py-2.5 md:text-base ${
+        active ? "bg-linear-to-r from-panel-accent/80 to-transparent text-white" : "text-panel-muted hover:bg-white/5 hover:text-panel-text"
+      }`}
     >
-      {icon && <span style={{ display: "flex", flexShrink: 0 }}>{icon}</span>}
+      <span className="hidden shrink-0 md:flex">{icon}</span>
       {label}
-    </div>
+    </button>
   );
 }

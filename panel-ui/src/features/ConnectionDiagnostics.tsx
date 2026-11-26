@@ -27,13 +27,7 @@ export function ConnectionDiagnostics({
 
   return (
     <div
-      style={{
-        border: "1px solid #331e12",
-        borderRadius: 4,
-        background: "rgba(0,0,0,0.15)",
-        margin: "12px 16px",
-        overflow: "hidden",
-      }}
+      className="mx-4 my-3 overflow-hidden rounded-sm border border-solid border-panel-border bg-black/15"
     >
       <div
         style={{
@@ -54,7 +48,6 @@ export function ConnectionDiagnostics({
             style={{
               color: EVENT_COLORS[latest.event_type] ?? "#dcdcdc",
               fontSize: 12,
-              fontFamily: "Cascadia Code, JetBrains Mono, Consolas, monospace",
               whiteSpace: "nowrap",
               overflow: "hidden",
               textOverflow: "ellipsis",

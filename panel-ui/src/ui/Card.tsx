@@ -1,19 +1,5 @@
-import type { ReactNode, CSSProperties } from "react";
+import type { HTMLAttributes } from "react";
 
-const cardStyle: CSSProperties = {
-  padding: 16,
-  borderRadius: 6,
-  border: "1px solid #331e12",
-  background: "rgba(0,0,0,0.15)",
-};
-
-export function Card({ children, style, ...rest }: {
-  children: ReactNode;
-  style?: CSSProperties;
-} & Record<string, unknown>) {
-  return (
-    <div style={{ ...cardStyle, ...style }} {...rest}>
-      {children}
-    </div>
-  );
+export function Card({ className = "", ...props }: HTMLAttributes<HTMLDivElement>) {
+  return <div className={`min-w-0 rounded-md border border-solid border-panel-border bg-black/15 p-4 ${className}`} {...props} />;
 }

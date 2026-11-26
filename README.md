@@ -57,6 +57,19 @@ npm run dev
 npm run dev:frontend
 ```
 
+### 网页面板演示
+
+网页演示与 Tauri 面板共用 Tailwind 样式和界面组件。演示使用固定的任务、招式和日志样本，日志分析图表在首次打开时加载。
+
+在 `panel-ui` 目录执行：
+
+```powershell
+npm run dev:demo    # 启动演示的开发服务器
+npm run build:demo  # 生成 dist-demo/
+```
+
+将 `panel-ui/dist-demo/` 的完整内容部署到静态服务器，即可通过浏览器访问演示。
+
 ### 打包
 
 ```powershell

@@ -1,6 +1,6 @@
 import { useState, useCallback, useLayoutEffect, useEffect, useRef } from "react";
 
-export type SectionId = "basic-tools" | "hunting-log" | "log-analysis" | "software-updates" | "usage-guide";
+import type { SectionId } from "../types";
 
 interface SectionRefs {
   basicTools: React.RefObject<HTMLDivElement | null>;

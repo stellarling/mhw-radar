@@ -1,32 +1,27 @@
-import { LogoImage } from "../ui/LogoImage";
+import type { ReactNode } from "react";
+
+import type { SectionId } from "../types";
 import { NavButton } from "../ui/NavButton";
-import { invoke } from "@tauri-apps/api/core";
+
+const DATA_LAB = "https://mhdatalab.com";
 
 export function Sidebar({
   activeSection,
   onNavigate,
+  logo,
+  onOpenExternal,
 }: {
-  activeSection: string;
-  onNavigate: (id: string) => void;
+  activeSection: SectionId;
+  onNavigate: (id: SectionId) => void;
+  logo?: ReactNode;
+  onOpenExternal?: (url: string) => void;
 }) {
   return (
-    <div style={{
-      width: 180,
-      background: "rgba(0,0,0,0.2)",
-      display: "flex",
-      flexDirection: "column",
-      alignItems: "stretch",
-      flexShrink: 0,
-      paddingTop: 20,
-      gap: 40,
-      borderRight: "1px solid #331e12",
-    }}>
-      <div style={{ display: "flex", justifyContent: "center", width: "100%", padding: "0 14px" }}>
-        <div style={{ width: "90%" }}>
-          <LogoImage fill />
-        </div>
+    <aside className="flex shrink-0 flex-col border-0 border-b border-solid border-panel-border bg-black/20 md:w-45 md:gap-8 md:border-r md:border-b-0 md:pt-5">
+      <div className="hidden min-h-9 justify-center px-5 text-center text-lg font-semibold tracking-wide text-panel-gold md:flex">
+        {logo ?? "MHW Radar"}
       </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 4, width: "100%" }}>
+      <nav aria-label="面板功能" className="grid w-full grid-cols-5 gap-1 md:flex md:flex-col">
         <NavButton
           label="基础工具"
           icon={
@@ -89,22 +84,19 @@ export function Sidebar({
           active={activeSection === "usage-guide"}
           onClick={() => onNavigate("usage-guide")}
         />
+      </nav>
+      <div className="mt-auto hidden px-3.5 pb-3.5 text-xs leading-relaxed text-panel-muted md:block">
+        数据由<a
+          className="text-panel-gold underline"
+          href={DATA_LAB}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={onOpenExternal ? (event) => {
+            event.preventDefault();
+            onOpenExternal(DATA_LAB);
+          } : undefined}
+        >mhdatalab.com</a>提供
       </div>
-      <div style={{ marginTop: "auto", padding: "0 14px 14px", display: "flex", flexDirection: "column", gap: 2 }}>
-        <span style={{ color: "#dcdcdc", fontSize: 14, lineHeight: 1.5 }}>MHW Radar</span>
-        <span style={{ color: "#8c8c8c", fontSize: 12, lineHeight: 1.5 }}>
-          数据由<span
-            style={{ color: "#b8a078", cursor: "pointer", textDecoration: "underline" }}
-            onClick={async () => {
-              try {
-                await invoke("open_external_url", { url: "https://mhdatalab.com" });
-              } catch (err) {
-                console.error("打开 mhdatalab.com 失败:", err);
-              }
-            }}
-          >mhdatalab.com</span>提供
-        </span>
-      </div>
-    </div>
+    </aside>
   );
 }

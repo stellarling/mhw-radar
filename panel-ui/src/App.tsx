@@ -1,28 +1,18 @@
-import { useState, useEffect, useCallback, useRef, Suspense, lazy } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
 import { API, GITHUB_REPO } from "./constants";
 import { useApi } from "./hooks/useApi";
-import { MainLayout } from "./layouts/MainLayout";
-import { Sidebar } from "./layouts/Sidebar";
-import { HeaderBar } from "./layouts/HeaderBar";
-import { StatusBar } from "./layouts/StatusBar";
-import { OpacitySection } from "./features/OpacitySection";
-import { ToggleSection } from "./features/ToggleSection";
-import { ConnectionDiagnostics } from "./features/ConnectionDiagnostics";
-import { LogSection } from "./features/LogSection";
+import { PanelView } from "./layouts/PanelView";
+import { LogoImage } from "./ui/LogoImage";
+import type { LogFilter } from "./features/LogSection";
 import { UpdateBanner } from "./features/UpdateBanner";
-const LogAnalysisSection = lazy(() =>
-  import("./features/LogAnalysisSection").then((m) => ({ default: m.LogAnalysisSection }))
-);
-import { SoftwareUpdatesSection } from "./features/SoftwareUpdatesSection";
-import { UsageGuideSection } from "./features/UsageGuideSection";
+import { LogAnalysis } from "./features/LogAnalysis";
 import { useQuestTimer } from "./hooks/useQuestTimer";
-import { useScrollSpy } from "./hooks/useScrollSpy";
 import { useUpdateChecker } from "./hooks/useUpdateChecker";
 import { useLogExport } from "./hooks/useLogExport";
 import { readApiError } from "./utils/api";
-import type { Settings, LogEntry, LogResponse, ConnectionLogEntry, ConnectionLogResponse, BoolKey, PanelStatus } from "./types";
+import type { Settings, LogEntry, LogResponse, ConnectionLogEntry, ConnectionLogResponse, BoolKey, PanelStatus, QuestStat, MonsterActionStats } from "./types";
 
 export default function App() {
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -36,11 +26,9 @@ export default function App() {
 
   const [connectionLogs, setConnectionLogs] = useState<ConnectionLogEntry[]>([]);
   const [autoScroll, setAutoScroll] = useState(true);
-  const [logFilter, setLogFilter] = useState<"all" | "combat" | "action" | "highlight">("all");
+  const [logFilter, setLogFilter] = useState<LogFilter>("all");
 
   const { displayTime } = useQuestTimer(status);
-  const { activeSection, scrollToSection, mainPanelRef, sectionRefs } = useScrollSpy();
-
   const {
     updateInfo,
     updateStatus,
@@ -215,110 +203,45 @@ export default function App() {
     }
   };
 
-  const scrollToBottom = () => {
-    mainPanelRef.current?.scrollTo({
-      top: mainPanelRef.current.scrollHeight,
-      behavior: "smooth",
-    });
-  };
-
-  // ── Render ──
   return (
-    <>
-      <style>{`
-        .drag-region { -webkit-app-region: drag; app-region: drag; }
-        .drag-region .no-drag,
-        .drag-region [data-no-drag] { -webkit-app-region: no-drag; app-region: no-drag; }
-      `}</style>
-
-      <MainLayout>
-        <Sidebar
-          activeSection={activeSection}
-          onNavigate={(id) => scrollToSection(id as Parameters<typeof scrollToSection>[0])}
+    <PanelView
+      version={appVersion}
+      logo={<LogoImage fill />}
+      onOpenExternal={openExternal}
+      onClose={closeWindow}
+      status={{ status, displayTime }}
+      banner={
+        <UpdateBanner
+          status={updateStatus}
+          updateInfo={updateInfo}
+          updateError={updateError}
+          downloadProgress={downloadProgress}
+          onUpdate={handleUpdate}
+          onDismiss={() => setUpdateStatus("latest")}
+          onRetry={checkForUpdates}
+          onOpenGithub={openExternal}
         />
-
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
-          <HeaderBar
-            version={appVersion}
-            onScrollBottom={scrollToBottom}
-            onClose={closeWindow}
-          />
-
-          <div
-            ref={mainPanelRef}
-            className="main-panel"
-            style={{
-              flex: 1,
-              overflowY: "auto",
-              display: "flex",
-              flexDirection: "column",
-            }}
-          >
-            <StatusBar status={status} displayTime={displayTime} />
-
-            <UpdateBanner
-              status={updateStatus}
-              updateInfo={updateInfo}
-              updateError={updateError}
-              downloadProgress={downloadProgress}
-              onUpdate={handleUpdate}
-              onDismiss={() => setUpdateStatus("latest")}
-              onRetry={checkForUpdates}
-              onOpenGithub={openExternal}
-            />
-
-            <OpacitySection settings={settings} onChange={updateSetting} />
-
-            <div ref={sectionRefs.basicTools} id="basic-tools">
-              <ToggleSection settings={settings} onToggle={handleToggle} />
-
-              <ConnectionDiagnostics
-                logs={connectionLogs}
-              />
-            </div>
-
-            <div
-              ref={sectionRefs.huntingLog}
-              id="hunting-log"
-              style={{ display: "flex", flexDirection: "column" }}
-            >
-              <div style={{ height: 1, background: "#331e12", margin: "0 16px" }} />
-              <LogSection
-                entries={logEntries}
-                totalRounds={totalRounds}
-                currentRound={currentRound}
-                autoScroll={autoScroll}
-                logFilter={logFilter}
-                onAutoScrollChange={setAutoScroll}
-                onFilterChange={setLogFilter}
-                onPageChange={setCurrentRound}
-                onClear={clearLogs}
-                onExportCurrent={exportCurrentPage}
-                onExportAll={exportAllRounds}
-              />
-            </div>
-
-            <Suspense fallback={<div style={{ padding: 16, fontSize: 12, color: "#8c8c8c", textAlign: "center" }}>正在加载日志分析...</div>}>
-              <LogAnalysisSection ref={sectionRefs.logAnalysis} />
-            </Suspense>
-
-            <SoftwareUpdatesSection
-              ref={sectionRefs.softwareUpdates}
-              updateStatus={updateStatus}
-              updateInfo={updateInfo}
-              updateError={updateError}
-              latestVersion={latestVersion}
-              downloadProgress={downloadProgress}
-              githubUrl={githubUrl}
-              onCheck={checkForUpdates}
-              onUpdate={handleUpdate}
-              onOpenGithub={openExternal}
-            />
-
-            <UsageGuideSection ref={sectionRefs.usageGuide} />
-          </div>
-        </div>
-      </MainLayout>
-    </>
+      }
+      opacity={{ settings, onChange: updateSetting }}
+      toggles={{ settings, onToggle: handleToggle }}
+      diagnostics={{ logs: connectionLogs }}
+      logs={{
+        entries: logEntries, totalRounds, currentRound, autoScroll, logFilter,
+        onAutoScrollChange: setAutoScroll, onFilterChange: setLogFilter, onPageChange: setCurrentRound,
+        onClear: clearLogs, onExportCurrent: exportCurrentPage, onExportAll: exportAllRounds,
+      }}
+      analysis={<DesktopLogAnalysis />}
+      updates={{
+        updateStatus, updateInfo, updateError, latestVersion, downloadProgress, githubUrl,
+        onCheck: checkForUpdates, onUpdate: handleUpdate, onOpenGithub: openExternal,
+      }}
+    />
   );
+}
+
+function DesktopLogAnalysis() {
+  const stats = useApi<QuestStat[]>("/api/quest-stats", 2000);
+  const actionStats = useApi<MonsterActionStats[]>("/api/action-stats", 3000);
+
+  return <LogAnalysis stats={stats ?? []} actionStats={actionStats ?? []} />;
 }

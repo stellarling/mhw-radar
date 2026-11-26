@@ -1,6 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
+import "./panel.css";
 
 // 标记 WebView/React 启动时间点
 performance.mark("react-boot");

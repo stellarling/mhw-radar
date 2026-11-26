@@ -1,6 +1,7 @@
 import { forwardRef, useState, useRef, useCallback, useEffect, useMemo } from "react";
 import type { LogEntry } from "../types";
-import { LOG_COLORS, HIGHLIGHT_RULES, btnStyle } from "../constants";
+import { LOG_COLORS, HIGHLIGHT_RULES } from "../constants";
+import { ToggleSwitch } from "../ui/ToggleSwitch";
 
 const arrowBtnStyle: React.CSSProperties = {
   width: 22,
@@ -21,56 +22,9 @@ const arrowBtnStyle: React.CSSProperties = {
   padding: 0,
 };
 
-function ToggleSwitch({
-  checked,
-  onChange,
-  label,
-}: {
-  checked: boolean;
-  onChange: (v: boolean) => void;
-  label: string;
-}) {
-  return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 8,
-        cursor: "pointer",
-        userSelect: "none",
-      }}
-      onClick={() => onChange(!checked)}
-    >
-      <div
-        style={{
-          width: 38,
-          height: 20,
-          borderRadius: 10,
-          flexShrink: 0,
-          background: checked ? "linear-gradient(#BFA76B, #6C552D)" : "#444444",
-          position: "relative",
-          border: "1px solid #666",
-          transition: "background 0.1s",
-        }}
-      >
-        <div
-          style={{
-            width: 16,
-            height: 16,
-            borderRadius: "50%",
-            background: "#fff",
-            position: "absolute",
-            top: 1,
-            left: checked ? 20 : 2,
-            transition: "left 0.1s",
-          }}
-        />
-      </div>
+export type LogFilter = "all" | "combat" | "action" | "highlight";
 
-      <span style={{ color: "#dcdcdc", fontSize: 13 }}>{label}</span>
-    </div>
-  );
-}
+const logButtonClassName = "cursor-pointer rounded-sm border-0 bg-panel-border px-2.5 py-1.5 text-xs text-panel-text hover:bg-[#4A2A15] hover:text-panel-gold";
 
 export const LogSection = forwardRef<
   HTMLDivElement,
@@ -79,9 +33,9 @@ export const LogSection = forwardRef<
     totalRounds: number;
     currentRound: number;
     autoScroll: boolean;
-    logFilter: "all" | "combat" | "action" | "highlight";
+    logFilter: LogFilter;
     onAutoScrollChange: (v: boolean) => void;
-    onFilterChange: (v: "all" | "combat" | "action" | "highlight") => void;
+    onFilterChange: (v: LogFilter) => void;
     onPageChange: (page: number) => void;
     onClear: () => void;
     onExportCurrent: () => void;
@@ -289,15 +243,6 @@ export const LogSection = forwardRef<
     return e.monster_id === monsterFilter;
   });
 
-  const [hoveredFilter, setHoveredFilter] = useState<string | null>(null);
-  const [bottomHovered, setBottomHovered] = useState<string | null>(null);
-
-  const bottomBtnStyle = (name: string): React.CSSProperties => ({
-    ...btnStyle,
-    background: bottomHovered === name ? "#4a2a15" : "#331e12",
-    color: bottomHovered === name ? "#f0d8b0" : "#dcdcdc",
-  });
-
   const filterOptions = [
     { value: "all" as const, label: "全部显示" },
     { value: "combat" as const, label: "仅伤害记录" },
@@ -320,31 +265,10 @@ export const LogSection = forwardRef<
     ];
   }, [entries]);
 
-  const filterBtnStyle = (value: string): React.CSSProperties => ({
-    ...btnStyle,
-    background: logFilter === value ? "#5c3a1e" : hoveredFilter === value ? "#4a2a15" : "#331e12",
-    color: logFilter === value ? "#ffddaa" : hoveredFilter === value ? "#f0d8b0" : "#dcdcdc",
-  });
-
   return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        padding: "16px 16px",
-      }}
-    >
-      {/* ── 标题行 ── */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          marginBottom: 10,
-          flexWrap: "wrap",
-          gap: 6,
-        }}
-      >
-        <h2 style={{ color: "#dcdcdc", fontSize: 16, margin: 0 }}>狩猎日志</h2>
+    <section aria-label="狩猎日志" className="flex flex-col p-4">
+      <div className="mb-2.5 flex flex-wrap items-center gap-1.5">
+        <h2 className="m-0 text-base font-semibold text-panel-text">狩猎日志</h2>
 
         <span style={{ color: "#dcdcdc", fontSize: 12, marginLeft: 4 }}>
           {filteredEntries.length} 条 / {totalRounds} 轮
@@ -378,6 +302,8 @@ export const LogSection = forwardRef<
             >
               <input
                 ref={pageInputRef}
+                aria-label="日志页码"
+                inputMode="numeric"
                 value={pageInput}
                 onChange={(e) => setPageInput(e.target.value)}
                 onKeyDown={(e) => {
@@ -416,14 +342,14 @@ export const LogSection = forwardRef<
         )}
 
         {/* 筛选按钮 */}
-        <div style={{ display: "flex", gap: 8, marginLeft: 8 }}>
+        <div className="flex flex-wrap gap-1.5">
           {filterOptions.map((opt) => (
             <button
               key={opt.value}
+              type="button"
+              aria-pressed={logFilter === opt.value}
               onClick={() => onFilterChange(opt.value)}
-              onMouseEnter={() => setHoveredFilter(opt.value)}
-              onMouseLeave={() => setHoveredFilter(null)}
-              style={filterBtnStyle(opt.value)}
+              className={`${logButtonClassName} aria-pressed:bg-[#5C3A1E] aria-pressed:text-panel-gold`}
             >
               {opt.label}
             </button>
@@ -433,6 +359,7 @@ export const LogSection = forwardRef<
         {/* 怪物筛选下拉 */}
         {monsterOptions.length > 0 && (
           <select
+            aria-label="筛选怪物"
             value={monsterFilter}
             onChange={(e) => setMonsterFilter(Number(e.target.value))}
             style={{
@@ -466,19 +393,7 @@ export const LogSection = forwardRef<
       {/* ── 日志容器 ── */}
       <div
         ref={containerRef}
-        className="log-container"
-        style={{
-          flex: "none",
-          height: 360,
-          overflowY: "auto",
-          fontSize: 14,
-          fontFamily: "Cascadia Code, JetBrains Mono, Consolas, monospace",
-          lineHeight: 1.7,
-          border: "1px solid #331e12",
-          borderRadius: 4,
-          padding: 8,
-          background: "rgba(0,0,0,0.25)",
-        }}
+        className="log-container h-90 flex-none overflow-y-auto rounded-sm border border-solid border-panel-border bg-black/25 p-2 text-xs leading-relaxed tabular-nums md:text-sm"
         tabIndex={0}
         onWheel={handleWheel}
         onTouchStart={handleTouchStart}
@@ -529,46 +444,12 @@ export const LogSection = forwardRef<
         <div ref={logEndRef} />
       </div>
 
-      {/* ── 底部按钮行 ── */}
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "flex-end",
-          alignItems: "center",
-          gap: 8,
-          marginTop: 10,
-        }}
-      >
-        <span style={{ color: "#8c8c8c", fontSize: 14, userSelect: "none", marginRight: "auto" }}>
-          (注：每场狩猎的日志独立成页)
-        </span>
-        <button
-          onClick={onClear}
-          style={bottomBtnStyle("clear")}
-          onMouseEnter={() => setBottomHovered("clear")}
-          onMouseLeave={() => setBottomHovered(null)}
-        >
-          清除日志
-        </button>
-
-        <button
-          onClick={onExportAll}
-          style={bottomBtnStyle("exportAll")}
-          onMouseEnter={() => setBottomHovered("exportAll")}
-          onMouseLeave={() => setBottomHovered(null)}
-        >
-          导出全部
-        </button>
-
-        <button
-          onClick={onExportCurrent}
-          style={bottomBtnStyle("exportCurrent")}
-          onMouseEnter={() => setBottomHovered("exportCurrent")}
-          onMouseLeave={() => setBottomHovered(null)}
-        >
-          导出本页
-        </button>
+      <div className="mt-2.5 flex flex-wrap items-center gap-2">
+        <span className="mr-auto text-xs text-panel-muted">每场狩猎的日志独立成页</span>
+        <button type="button" onClick={onClear} className={logButtonClassName}>清除日志</button>
+        <button type="button" onClick={onExportAll} className={logButtonClassName}>导出全部</button>
+        <button type="button" onClick={onExportCurrent} className={logButtonClassName}>导出本页</button>
       </div>
-    </div>
+    </section>
   );
 });
